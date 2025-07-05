@@ -1,7 +1,7 @@
 # Анализатор очередей Asterisk
 
-![Главный экран приложения](/screen/screenshot1.png)
-![Экран статистики](/screen/screenshot2.png)
+![Главный экран приложения](https://raw.githubusercontent.com/maerty1/asterisk-stats/refs/heads/main/screen/screen1.png)
+![Экран статистики](https://raw.githubusercontent.com/maerty1/asterisk-stats/refs/heads/main/screen/screen2.png)
 
 ## Описание
 
