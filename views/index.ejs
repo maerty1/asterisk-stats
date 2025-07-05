@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    :root {
+      --primary-color: #6366f1;
+      --success-color: #10b981;
+      --warning-color: #f59e0b;
+      --danger-color: #ef4444;
+      --text-secondary: #64748b;
+      --text-muted: #94a3b8;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #f1f5f9;
+      color: #1e293b;
+      line-height: 1.6;
+    }
+
+    .header {
+      background-color: white;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      margin-bottom: 2rem;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .stat-card {
+      background: white;
+      border-radius: 12px;
+      padding: 1.75rem 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      border-top: 4px solid var(--primary-color);
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 6px 12px rgba(0,0,0,0.12);
+    }
+
+    .stat-value {
+      font-size: 2.4rem;
+      font-weight: 700;
+      line-height: 1.2;
+      margin: 0.75rem 0;
+      color: #1e293b;
+      display: flex;
+      align-items: flex-end;
+    }
+
+    .stat-label {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      letter-spacing: 0.02em;
+    }
+
+    .stat-meta {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .stat-icon {
+      margin-right: 0.75rem;
+      font-size: 1.25rem;
+      opacity: 0.8;
+    }
+
+    .stat-card--primary {
+      border-color: var(--primary-color);
+    }
+    .stat-card--success {
+      border-color: var(--success-color);
+    }
+    .stat-card--warning {
+      border-color: var(--warning-color);
+    }
+    .stat-card--danger {
+      border-color: var(--danger-color);
+    }
+
+    .stat-badge {
+      font-size: 0.75rem;
+      padding: 0.35em 0.65em;
+      border-radius: 8px;
+      background-color: rgba(16, 185, 129, 0.1);
+      color: var(--success-color);
+      font-weight: 600;
+      margin-left: 0.75rem;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .animate-stat {
+      animation: fadeIn 0.4s ease-out forwards;
+    }
+
+    .chart-container {
+      height: 300px;
+      margin: 2rem 0;
+    }
+
+    .audio-player {
+      max-width: 250px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <nav class="navbar navbar-expand-lg navbar-light py-3">
+        <a class="navbar-brand d-flex align-items-center" href="/">
+          <i class="bi bi-telephone-outbound-fill me-2 text-primary"></i>
+          <span>Анализатор очередей Asterisk</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container py-4">
+    <div class="card shadow-lg">
+      <div class="card-header">
+        <h1 class="h4 mb-0"><%= title %></h1>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/report" class="mb-4">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+              <label for="queue_name" class="form-label">Очередь</label>
+              <select class="form-select" id="queue_name" name="queue_name" required>
+                <option value="">Выберите очередь</option>
+                <% queues.forEach(queue => { %>
+                  <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>>
+                    <%= queue %>
+                  </option>
+                <% }); %>
+              </select>
+            </div>
+            
+            <div class="col-md-3">
+              <label for="start_date" class="form-label">Начальная дата</label>
+              <input type="date" class="form-control" id="start_date" name="start_date" 
+                     value="<%= startDate %>" required>
+            </div>
+            
+            <div class="col-md-3">
+              <label for="end_date" class="form-label">Конечная дата</label>
+              <input type="date" class="form-control" id="end_date" name="end_date" 
+                     value="<%= endDate %>" required>
+            </div>
+            
+            <div class="col-md-2">
+              <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-bar-chart-line me-1"></i> Сформировать
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <% if (results) { %>
+          <!-- Статистика -->
+          <div class="stats-grid">
+            <!-- Всего звонков -->
+            <div class="stat-card stat-card--primary animate-stat" style="animation-delay: 0.1s">
+              <div class="stat-label">
+                <i class="bi bi-telephone-outbound stat-icon"></i>
+                Всего звонков
+              </div>
+              <div class="stat-value">
+                <%= results.stats.totalCalls %>
+              </div>
+              <div class="stat-meta">
+                <i class="bi bi-calendar-week"></i>
+                <%= helpers.formatShortDate(startDate) %> - <%= helpers.formatShortDate(endDate) %>
+              </div>
+            </div>
+
+            <!-- Отвечено -->
+            <div class="stat-card stat-card--success animate-stat" style="animation-delay: 0.2s">
+              <div class="stat-label">
+                <i class="bi bi-check-circle stat-icon"></i>
+                Отвечено
+              </div>
+              <div class="stat-value">
+                <%= results.stats.answeredCalls %>
+                <span class="stat-badge">
+                  <%= results.stats.answerRate %>%
+                </span>
+              </div>
+              <div class="stat-meta">
+                <i class="bi <%= results.stats.answerRate > 90 ? 'bi-emoji-smile' : 'bi-emoji-frown' %>"></i>
+                <% if (results.stats.answerRate > 90) { %>
+                  Отличный показатель
+                <% } else if (results.stats.answerRate > 70) { %>
+                  Средний показатель
+                <% } else { %>
+                  Низкий показатель
+                <% } %>
+              </div>
+            </div>
+
+            <!-- Среднее ожидание -->
+            <div class="stat-card stat-card--warning animate-stat" style="animation-delay: 0.3s">
+              <div class="stat-label">
+                <i class="bi bi-clock-history stat-icon"></i>
+                Ср. ожидание
+              </div>
+              <div class="stat-value">
+                <%= results.stats.avgWaitTime %>
+                <span class="text-muted" style="font-size: 1rem; margin-left: 0.25rem">сек</span>
+              </div>
+              <div class="stat-meta">
+                <i class="bi <%= results.stats.avgWaitTime > 30 ? 'bi-exclamation-triangle' : 'bi-check' %>"></i>
+                <% if (results.stats.avgWaitTime > 45) { %>
+                  Долгое ожидание
+                <% } else if (results.stats.avgWaitTime > 30) { %>
+                  Приемлемое время
+                <% } else { %>
+                  Быстрое соединение
+                <% } %>
+              </div>
+            </div>
+
+            <!-- Средняя длительность -->
+            <div class="stat-card stat-card--danger animate-stat" style="animation-delay: 0.4s">
+              <div class="stat-label">
+                <i class="bi bi-hourglass-split stat-icon"></i>
+                Ср. длительность
+              </div>
+              <div class="stat-value">
+                <%= results.stats.avgDuration %>
+                <span class="text-muted" style="font-size: 1rem; margin-left: 0.25rem">сек</span>
+              </div>
+              <div class="stat-meta">
+                <i class="bi bi-alarm"></i>
+                ~<%= Math.round(results.stats.avgDuration/60) %> мин <%= results.stats.avgDuration % 60 %> сек
+              </div>
+            </div>
+          </div>
+
+          <!-- Диаграмма -->
+          <div class="chart-container">
+            <canvas id="statusChart"></canvas>
+          </div>
+
+          <!-- Детализация -->
+          <div class="card">
+            <div class="card-header">
+              <h2 class="h5 mb-0">Детализация звонков</h2>
+              <p class="text-muted small mb-0 mt-1">
+                Показано <%= results.calls.length %> из <%= results.stats.totalCalls %> звонков
+                <% if (results.calls.length < results.stats.totalCalls) { %>
+                  (только первые 200)
+                <% } %>
+              </p>
+            </div>
+            <div class="card-body p-0">
+              <% if (results.calls.length === 0) { %>
+                <div class="alert alert-info m-3">Нет данных о звонках за выбранный период</div>
+              <% } else { %>
+                <div class="table-responsive">
+                  <table class="table table-hover mb-0">
+                    <thead>
+                      <tr>
+                        <th>Дата</th>
+                        <th>Время</th>
+                        <th>Клиент</th>
+                        <th>Ожидание</th>
+                        <th>Длительность</th>
+                        <th>Статус</th>
+                        <th>Запись</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <% results.calls.forEach(call => { %>
+                        <tr>
+                          <td><%= helpers.formatShortDate(call.startTime) %></td>
+                          <td><%= helpers.formatTime(call.startTime) %></td>
+                          <td><%= call.clientNumber || '-' %></td>
+                          <td><%= helpers.calculateWaitTime(call) %> сек</td>
+                          <td><%= helpers.formatDuration(call.duration) %></td>
+                          <td>
+                            <span class="badge <%= call.status === 'abandoned' ? 'bg-danger' : 'bg-success' %>">
+                              <%- helpers.translateStatus(call.status) %>
+                            </span>
+                          </td>
+                          <td>
+                            <% if (call.recordingFile && call.status !== 'abandoned') { %>
+                              <audio controls class="audio-player">
+                                <source src="<%= helpers.getRecordingLink(call.recordingFile) %>" type="audio/mpeg">
+                              </audio>
+                            <% } else { %>
+                              <span class="text-muted small">Нет записи</span>
+                            <% } %>
+                          </td>
+                        </tr>
+                      <% }); %>
+                    </tbody>
+                  </table>
+                </div>
+              <% } %>
+            </div>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    <% if (results) { %>
+      document.addEventListener('DOMContentLoaded', function() {
+        const ctx = document.getElementById('statusChart').getContext('2d');
+        new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: ['Отвечено', 'Неотвечен'],
+            datasets: [{
+              data: [<%= results.callsByStatus.answered %>, <%= results.callsByStatus.abandoned %>],
+              backgroundColor: ['#10b981', '#ef4444'],
+              borderWidth: 0,
+              borderRadius: 8
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+              legend: { 
+                position: 'bottom',
+                labels: {
+                  padding: 20,
+                  usePointStyle: true,
+                  pointStyle: 'circle'
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                    const value = context.raw;
+                    const percentage = Math.round((value / total) * 100);
+                    return `${context.label}: ${value} (${percentage}%)`;
+                  }
+                }
+              }
+            }
+          }
+        });
+      });
+    <% } %>
+  </script>
+</body>
+</html>

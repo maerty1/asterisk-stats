@@ -1,0 +1,4 @@
+node_modules/
+.env
+/screen/screenshot1.png
+/screen/screenshot2.png
