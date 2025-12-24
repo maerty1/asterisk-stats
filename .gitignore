@@ -1,38 +1,118 @@
+# ==========================================
 # Dependencies
+# ==========================================
 node_modules/
-package-lock.json
+# package-lock.json - НЕ игнорируем, нужен для фиксации версий
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnp
+.pnp.js
 
+# ==========================================
 # Environment variables
+# ==========================================
 .env
 .env.local
 .env.*.local
+.env.backup
+.env.*.backup
+*.env
 
+# ==========================================
 # Logs
+# ==========================================
 logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+lerna-debug.log*
+pids
+*.pid
+*.seed
+*.pid.lock
 
+# ==========================================
 # OS files
+# ==========================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
 
-# IDE
+# ==========================================
+# IDE and Editor files
+# ==========================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
 
+# ==========================================
 # Temporary files
+# ==========================================
 *.tmp
 *.temp
+*.cache
+.cache/
+.temp/
+tmp/
+temp/
+
+# ==========================================
+# Build and dist files
+# ==========================================
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ==========================================
+# Test files
+# ==========================================
+coverage/
+.nyc_output/
+*.test.js
+*.spec.js
 test.html
-# screen/ - скриншоты для README
 
-# Temporary documentation files (удалены из проекта)
-# Эти файлы больше не существуют, но оставлены в .gitignore на случай восстановления
+# ==========================================
+# Database
+# ==========================================
+*.sqlite
+*.sqlite3
+*.db
 
+# ==========================================
+# Backup files
+# ==========================================
+*.backup
+*.bak
+*.old
+*~
+
+# ==========================================
+# Project specific
+# ==========================================
+# screen/ - скриншоты для README (оставляем в репозитории)
+# update_screenshots.sh - временный скрипт
+update_screenshots.sh
+
+# ==========================================
 # Git
+# ==========================================
 .git/cursor/
+.git/COMMIT_EDITMSG
