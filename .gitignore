@@ -29,29 +29,10 @@ Thumbs.db
 *.tmp
 *.temp
 test.html
-screen/
+# screen/ - скриншоты для README
 
-# Documentation (temporary)
-CALLBACK_ANALYSIS.md
-DIAGNOSTIC_CHECK.md
-FINAL_CHECK.md
-FINAL_FIX.md
-FINAL_WEB_CHECK.md
-FIXES_SUMMARY.md
-JS_FIX.md
-PROBLEMS_REPORT.md
-PROJECT_CHECK.md
-SECURITY_FIXES.md
-STATIC_FILES_FIX.md
-STYLING_UNIFIED.md
-TABLE_FIX_FINAL.md
-TABLE_FIX.md
-TABLE_REWRITE.md
-TEST_FINAL.md
-TEST_RESULTS.md
-WEB_CHECK.md
-WEB_FIX_SUMMARY.md
-README
+# Temporary documentation files (удалены из проекта)
+# Эти файлы больше не существуют, но оставлены в .gitignore на случай восстановления
 
 # Git
 .git/cursor/
