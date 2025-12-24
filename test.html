@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Recordings</title>
+</head>
+<body>
+    <h1>Test Audio Playback</h1>
+    <audio controls>
+        <source src="http://localhost:3000/recordings/2025/12/13?file=in-79374225828-79875195404-20251213-154934-1765630174.31098.mp3" type="audio/mpeg">
+        Your browser does not support the audio element.
+    </audio>
+
+    <script>
+        fetch('http://localhost:3000/recordings/2025/12/13?file=in-79374225828-79875195404-20251213-154934-1765630174.31098.mp3')
+            .then(response => {
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers.get('content-type'));
+                return response.text();
+            })
+            .then(data => {
+                console.log('Response data (first 200 chars):', data.substring(0, 200));
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+    </script>
+</body>
+</html>
