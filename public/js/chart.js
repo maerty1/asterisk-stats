@@ -386,14 +386,22 @@ function exportToCSV() {
     const headers = ['Дата', 'Время', 'Клиент', 'Ожидание (сек)', 'Длительность', 'Статус'];
     const csvContent = [
       headers.join(','),
-      ...data.calls.map(call => [
-        call.startTime.split('T')[0],
-        new Date(call.startTime).toLocaleTimeString('ru-RU'),
-        call.clientNumber || '-',
-        call.waitTime || 0,
-        call.duration || 0,
-        call.status === 'abandoned' ? 'Пропущен' : 'Принят'
-      ].map(field => `"${field}"`).join(','))
+      ...data.calls.map(call => {
+        // Для исходящих звонков показываем destination (длинный номер)
+        // Используем флаг isOutbound из данных сервера
+        const displayNumber = call.isOutbound && call.destination 
+          ? (call.destination || call.clientNumber || '-') 
+          : (call.clientNumber || '-');
+        
+        return [
+          call.startTime.split('T')[0],
+          new Date(call.startTime).toLocaleTimeString('ru-RU'),
+          displayNumber,
+          call.waitTime || 0,
+          call.duration || 0,
+          call.status === 'abandoned' ? 'Пропущен' : 'Принят'
+        ].map(field => `"${field}"`).join(',');
+      })
     ].join('\n');
 
     downloadFile(csvContent, 'asterisk-report.csv', 'text/csv');
@@ -479,16 +487,34 @@ class CallsTableManager {
         itemsPerPageSelect: !!this.itemsPerPageSelect,
         searchInput: !!this.searchInput
       });
+      // Не прерываем инициализацию, если элементы не найдены - возможно они появятся позже
     }
 
-    this.initialize();
+    // Небольшая задержка для гарантии, что DOM полностью загружен
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => this.initialize(), 100);
+      });
+    } else {
+      setTimeout(() => this.initialize(), 100);
+    }
   }
 
   initialize() {
     // Загружаем данные
     const callsDataElement = document.getElementById('calls-data');
     if (!callsDataElement) {
-      console.warn('calls-data element not found');
+      console.warn('calls-data element not found - таблица не будет заполнена');
+      // Показываем сообщение об отсутствии данных
+      if (this.tableBody) {
+        this.tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">Нет данных для отображения</td></tr>';
+      }
+      return;
+    }
+
+    // Проверяем наличие обязательных элементов
+    if (!this.tableBody) {
+      console.error('tableBody не найден');
       return;
     }
 
@@ -499,21 +525,43 @@ class CallsTableManager {
     }
 
     try {
-      this.calls = JSON.parse(callsDataElement.dataset.calls);
+      const callsData = callsDataElement.dataset.calls;
+      if (!callsData) {
+        console.warn('calls-data не содержит данных');
+        if (this.tableBody) {
+          this.tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">Нет данных для отображения</td></tr>';
+        }
+        return;
+      }
+
+      this.calls = JSON.parse(callsData);
       this.filteredCalls = [...this.calls];
+      
+      console.log('✅ Данные загружены. Всего звонков:', this.calls.length);
       
       // Отладка: проверяем наличие recordingFile
       const callsWithRecording = this.calls.filter(c => c.recordingFile);
-      console.log('Всего звонков:', this.calls.length);
       console.log('Звонков с записью:', callsWithRecording.length);
       if (callsWithRecording.length > 0) {
         console.log('Пример записи:', callsWithRecording[0].recordingFile);
       }
       
+      if (this.calls.length === 0) {
+        console.warn('Массив звонков пуст');
+        if (this.tableBody) {
+          this.tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">Нет звонков для отображения</td></tr>';
+        }
+        return;
+      }
+
       this.setupEventListeners();
       this.renderTable();
     } catch (error) {
       console.error('Ошибка загрузки данных таблицы:', error);
+      console.error('Детали ошибки:', error.message, error.stack);
+      if (this.tableBody) {
+        this.tableBody.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--md-sys-color-error);">Ошибка загрузки данных: ${error.message}</td></tr>`;
+      }
     }
   }
 
@@ -609,8 +657,16 @@ class CallsTableManager {
     // Применяем поиск
     if (this.searchTerm) {
       this.filteredCalls = this.filteredCalls.filter(call => {
+        // Для поиска используем оба номера (clientNumber и destination)
+        // Используем флаг isOutbound из данных сервера
+        const displayNumber = call.isOutbound && call.destination 
+          ? (call.destination || call.clientNumber || '') 
+          : (call.clientNumber || '');
+        
         const searchFields = [
           call.clientNumber || '',
+          call.destination || '',
+          displayNumber,
           call.status === 'abandoned' ? 'пропущен' : 'принят',
           call.status,
           call.startTime || '',
@@ -671,11 +727,29 @@ class CallsTableManager {
 
 
   renderTable() {
+    if (!this.tableBody) {
+      console.error('renderTable: tableBody не найден');
+      return;
+    }
+
+    if (!this.calls || this.calls.length === 0) {
+      console.warn('renderTable: нет данных для отображения');
+      this.tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">Нет звонков для отображения</td></tr>';
+      this.updateInfo();
+      return;
+    }
+
     console.log('renderTable вызвана, calls:', this.calls.length, 'filteredCalls:', this.filteredCalls.length);
     const startIndex = (this.currentPage - 1) * this.itemsPerPage;
     const endIndex = startIndex + this.itemsPerPage;
     const pageData = this.filteredCalls.slice(startIndex, endIndex);
     console.log('pageData length:', pageData.length);
+
+    if (pageData.length === 0) {
+      this.tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">Нет данных, соответствующих фильтрам</td></tr>';
+      this.updateInfo();
+      return;
+    }
 
     // Показываем skeleton loading на короткое время для плавности
     const wasEmpty = this.tableBody.children.length === 0;
@@ -720,8 +794,10 @@ class CallsTableManager {
       const recordingFile = cell.getAttribute('data-recording');
       const status = cell.getAttribute('data-status');
       
-      // Пропускаем если нет записи или звонок пропущен
-      if (!recordingFile || status === 'abandoned') {
+      // Пропускаем если нет записи или звонок не принят
+      // Показываем записи для: answered, completed_by_agent, completed_by_caller
+      const validStatuses = ['answered', 'completed_by_agent', 'completed_by_caller'];
+      if (!recordingFile || !validStatuses.includes(status)) {
         return;
       }
       
@@ -961,14 +1037,33 @@ class CallsTableManager {
 
     const isCompleted = call.status === 'completed_by_agent' || call.status === 'completed_by_caller';
     
-    // Определяем статус с учетом перезвонов
+    // Определяем статус с учетом перезвонов и типа представления
     let statusText, statusIcon, statusClass;
-    if (isCompleted) {
+    
+    // Для входящих/исходящих звонков используем disposition из CDR
+    if (call.status === 'answered') {
+      statusText = 'Принят';
+      statusIcon = '✓';
+      statusClass = 'answered';
+    } else if (call.status === 'no_answer') {
+      statusText = 'Не отвечен';
+      statusIcon = '✗';
+      statusClass = 'abandoned';
+    } else if (call.status === 'busy') {
+      statusText = 'Занято';
+      statusIcon = '⏸';
+      statusClass = 'busy';
+    } else if (call.status === 'failed') {
+      statusText = 'Неудачно';
+      statusIcon = '✗';
+      statusClass = 'failed';
+    } else if (isCompleted) {
+      // Для очередей
       statusText = 'Обработан';
       statusIcon = '✓';
       statusClass = 'completed';
     } else if (call.callbackStatus) {
-      // Статус перезвона
+      // Статус перезвона (для очередей)
       statusText = call.callbackStatus;
       if (call.callbackStatus === 'Перезвонил сам') {
         statusIcon = '↩️';
@@ -981,14 +1076,20 @@ class CallsTableManager {
         statusClass = 'callback-no';
       }
     } else {
+      // Для очередей - пропущен
       statusText = 'Пропущен';
       statusIcon = '✗';
       statusClass = 'abandoned';
     }
 
     let recordingHtml = '';
-    // Показываем запись для обработанных или перезвонов
-    const hasRecording = call.recordingFile && (isCompleted || (call.callbackStatus && call.callbackStatus !== 'Не обработан'));
+    // Показываем запись для:
+    // 1. Принятых входящих/исходящих звонков (status === 'answered')
+    // 2. Обработанных звонков в очередях (isCompleted)
+    // 3. Перезвонов с записью (callbackStatus)
+    // Для исходящих и входящих звонков запись есть, если звонок принят (answered)
+    const isAnswered = call.status === 'answered';
+    const hasRecording = call.recordingFile && (isAnswered || isCompleted || (call.callbackStatus && call.callbackStatus !== 'Не обработан'));
     if (hasRecording) {
       const parts = call.recordingFile.split('-');
       if (parts.length >= 4) {
@@ -1020,10 +1121,16 @@ class CallsTableManager {
     const waitTimeText = waitTime ? `${waitTime} сек` : '-';
     const durationText = call.duration ? `${call.duration} сек` : '-';
 
+    // Для исходящих звонков показываем destination (длинный номер), а не clientNumber (короткий)
+    // Используем флаг isOutbound из данных сервера (определяется по outbound_cnum)
+    const displayNumber = call.isOutbound && call.destination 
+      ? (call.destination || call.clientNumber || 'Unknown') 
+      : (call.clientNumber || 'Unknown');
+
     return `
       <tr>
         <td>${formatDateTime(call.startTime)}</td>
-        <td class="tech-metric">${call.clientNumber || 'Unknown'}</td>
+        <td class="tech-metric">${displayNumber}</td>
         <td>${waitTimeText}</td>
         <td>${durationText}</td>
         <td>
@@ -1243,7 +1350,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Инициализируем менеджер таблицы
   console.log('Creating CallsTableManager...');
-  const tableManager = new CallsTableManager();
+  // Проверяем наличие данных перед инициализацией
+  const callsDataElement = document.getElementById('calls-data');
+  if (callsDataElement) {
+    console.log('calls-data элемент найден, инициализируем таблицу...');
+    const tableManager = new CallsTableManager();
+  } else {
+    console.warn('calls-data элемент не найден - таблица не будет инициализирована');
+  }
 
   // Анимируем счетчики статистики после небольшой задержки
   setTimeout(() => {

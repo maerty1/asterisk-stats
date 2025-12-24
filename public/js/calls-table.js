@@ -107,13 +107,41 @@ class SimpleCallsTable {
   }
 
   createRow(call) {
-    const statusText = call.status === 'abandoned' ? 'Пропущен' : 
-                      call.status === 'completed_by_agent' ? 'Завершен агентом' :
-                      call.status === 'completed_by_caller' ? 'Завершен клиентом' : 'Принят';
-    const statusClass = call.status === 'abandoned' ? 'status-error' : 'status-success';
+    // Определяем статус с учетом типа звонка (очередь/входящие/исходящие)
+    let statusText, statusClass;
+    
+    if (call.status === 'answered') {
+      statusText = 'Принят';
+      statusClass = 'status-success';
+    } else if (call.status === 'no_answer') {
+      statusText = 'Не отвечен';
+      statusClass = 'status-error';
+    } else if (call.status === 'busy') {
+      statusText = 'Занято';
+      statusClass = 'status-warning';
+    } else if (call.status === 'failed') {
+      statusText = 'Неудачно';
+      statusClass = 'status-error';
+    } else if (call.status === 'abandoned') {
+      statusText = 'Пропущен';
+      statusClass = 'status-error';
+    } else if (call.status === 'completed_by_agent') {
+      statusText = 'Завершен агентом';
+      statusClass = 'status-success';
+    } else if (call.status === 'completed_by_caller') {
+      statusText = 'Завершен клиентом';
+      statusClass = 'status-success';
+    } else {
+      statusText = 'Принят';
+      statusClass = 'status-success';
+    }
     
     let recordingCell = '<span class="no-recording">Нет записи</span>';
-    if (call.recordingFile && call.status !== 'abandoned') {
+    // Показываем запись для принятых звонков (answered) или обработанных (не abandoned)
+    const isAnswered = call.status === 'answered' || 
+                       call.status === 'completed_by_agent' || 
+                       call.status === 'completed_by_caller';
+    if (call.recordingFile && isAnswered) {
       const recordingUrl = this.getRecordingUrl(call.recordingFile);
       if (recordingUrl) {
         recordingCell = `
