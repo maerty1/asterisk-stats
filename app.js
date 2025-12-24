@@ -18,6 +18,13 @@ const DB_CONFIG = {
   connectionLimit: 5
 };
 
+// Конфигурация фильтрации звонков
+const CALL_FILTER_CONFIG = {
+  // Минимальная длина номера для исходящих звонков (по умолчанию 4)
+  // Номера длиннее этого значения считаются исходящими
+  outboundMinLength: parseInt(process.env.OUTBOUND_MIN_LENGTH) || 4
+};
+
 let availableQueues = [];
 
 // Middleware
@@ -166,63 +173,126 @@ app.get('/api/status', async (req, res) => {
 });
 
 // Маршруты
-app.get('/', (req, res) => {
+// Функция получения параметров фильтров из query string
+function getFilterParams(req) {
   const today = format(new Date(), 'yyyy-MM-dd');
+  return {
+    startDate: req.query.start_date || req.query.startDate || today,
+    endDate: req.query.end_date || req.query.endDate || today,
+    selectedQueue: req.query.queue_name || req.query.queue || ''
+  };
+}
+
+app.get('/', (req, res) => {
+  const params = getFilterParams(req);
   res.render('index', { 
     title: 'Анализатор очередей Asterisk',
     queues: availableQueues,
     results: null,
-    startDate: today,
-    endDate: today,
-    selectedQueue: '',
+    startDate: params.startDate,
+    endDate: params.endDate,
+    selectedQueue: params.selectedQueue,
+    viewType: 'queue',
+    helpers
+  });
+});
+
+app.get('/inbound', (req, res) => {
+  const params = getFilterParams(req);
+  res.render('index', { 
+    title: 'Входящие звонки - Asterisk Analytics',
+    queues: availableQueues,
+    results: null,
+    startDate: params.startDate,
+    endDate: params.endDate,
+    selectedQueue: params.selectedQueue,
+    viewType: 'inbound',
+    helpers
+  });
+});
+
+app.get('/outbound', (req, res) => {
+  const params = getFilterParams(req);
+  res.render('index', { 
+    title: 'Исходящие звонки - Asterisk Analytics',
+    queues: availableQueues,
+    results: null,
+    startDate: params.startDate,
+    endDate: params.endDate,
+    selectedQueue: params.selectedQueue,
+    viewType: 'outbound',
     helpers
   });
 });
 
 app.post('/report', async (req, res) => {
   try {
-    const { queue_name, start_date, end_date } = req.body;
+    const { queue_name, start_date, end_date, view_type } = req.body;
     const startTime = `${start_date} 00:00:00`;
     const endTime = `${end_date} 23:59:59`;
+    const viewType = view_type || 'queue';
+    
+    // Валидация: для очередей требуется queue_name
+    if (viewType === 'queue' && !queue_name) {
+      return res.status(400).render('error', {
+        message: 'Ошибка: для статистики по очередям необходимо выбрать очередь',
+        error: { message: 'Поле "Очередь" обязательно для заполнения' },
+        helpers,
+        NODE_ENV: process.env.NODE_ENV || 'development'
+      });
+    }
     
     const connection = await mysql.createConnection(DB_CONFIG);
-    let calls = await getQueueCalls(connection, queue_name, startTime, endTime);
+    let calls = [];
     
-    // Проверяем перезвоны для каждого пропущенного звонка
+    if (viewType === 'inbound') {
+      calls = await getInboundCalls(connection, startTime, endTime);
+    } else if (viewType === 'outbound') {
+      calls = await getOutboundCalls(connection, startTime, endTime);
+    } else {
+      // viewType === 'queue'
+      calls = await getQueueCalls(connection, queue_name, startTime, endTime);
+    }
+    
+    // Проверяем перезвоны только для очередей
     let callbackCheckCount = 0;
     let abandonedCount = 0;
-    for (let i = 0; i < calls.length; i++) {
-      // Определяем, является ли звонок пропущенным
-      const isAbandoned = calls[i].status === 'abandoned' || 
-                          (calls[i].duration && parseInt(calls[i].duration) <= 5) ||
-                          (!calls[i].connectTime && calls[i].endTime && calls[i].status !== 'completed_by_agent' && calls[i].status !== 'completed_by_caller');
-      
-      if (isAbandoned) {
-        abandonedCount++;
-        const callback = await checkCallbacks(connection, calls[i]);
-        if (callback) {
-          calls[i].callback = callback;
-          calls[i].callbackStatus = callback.status;
-          callbackCheckCount++;
-          // Обновляем recordingFile если найден перезвон с записью
-          if (callback.recordingFile) {
-            calls[i].recordingFile = callback.recordingFile;
+    if (viewType === 'queue') {
+      for (let i = 0; i < calls.length; i++) {
+        // Определяем, является ли звонок пропущенным
+        const isAbandoned = calls[i].status === 'abandoned' || 
+                            (calls[i].duration && parseInt(calls[i].duration) <= 5) ||
+                            (!calls[i].connectTime && calls[i].endTime && calls[i].status !== 'completed_by_agent' && calls[i].status !== 'completed_by_caller');
+        
+        if (isAbandoned) {
+          abandonedCount++;
+          const callback = await checkCallbacks(connection, calls[i], queue_name);
+          if (callback) {
+            calls[i].callback = callback;
+            calls[i].callbackStatus = callback.status;
+            callbackCheckCount++;
+            // Обновляем recordingFile если найден перезвон с записью
+            if (callback.recordingFile) {
+              calls[i].recordingFile = callback.recordingFile;
+            }
+          } else {
+            // Если callback вернул null (не должно происходить, но на всякий случай)
+            calls[i].callbackStatus = 'Не обработан';
           }
-        } else {
-          // Если callback вернул null (не должно происходить, но на всякий случай)
-          calls[i].callbackStatus = 'Не обработан';
         }
       }
+      console.log(`Проверено перезвонов: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
     }
-    console.log(`Проверено перезвонов: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
     
-    const stats = calculateStats(calls);
+    const stats = calculateStats(calls, viewType);
     await connection.end();
 
     res.render('index', { 
-      title: `Отчет по очереди ${queue_name}`,
+      title: viewType === 'inbound' ? 'Входящие звонки - Asterisk Analytics' : 
+             viewType === 'outbound' ? 'Исходящие звонки - Asterisk Analytics' : 
+             `Отчет по очереди ${queue_name}`,
       queues: availableQueues,
-      selectedQueue: queue_name,
+      selectedQueue: queue_name || '',
       results: { 
         calls: calls.slice(0, 10000),
         stats,
@@ -233,6 +303,7 @@ app.post('/report', async (req, res) => {
       },
       startDate: start_date,
       endDate: end_date,
+      viewType: viewType,
       helpers
     });
   } catch (err) {
@@ -457,8 +528,92 @@ async function getQueueCalls(conn, queueName, startTime, endTime) {
   return Object.values(calls);
 }
 
+// Функция получения входящих звонков из CDR
+async function getInboundCalls(conn, startTime, endTime) {
+  // Входящие звонки: исключаем исходящие маршруты и внутренние звонки
+  // Дополнительный критерий: номер назначения (dst) не длиннее минимальной длины для исходящих
+  // Основной критерий: dcontext не является исходящим маршрутом
+  const minLength = CALL_FILTER_CONFIG.outboundMinLength;
+  const [rows] = await conn.execute(`
+    SELECT 
+      c.calldate, c.uniqueid, c.linkedid, c.src, c.dst, 
+      c.disposition, c.billsec, c.duration, c.recordingfile,
+      c.dcontext, c.channel, c.lastapp, c.lastdata
+    FROM asteriskcdrdb.cdr c
+    WHERE c.calldate >= ? 
+      AND c.calldate <= ?
+      AND c.dcontext NOT LIKE 'outbound%'
+      AND c.dcontext NOT LIKE 'from-internal%'
+      AND c.dcontext NOT LIKE 'ext-local%'
+      AND c.channel NOT LIKE 'Local/%'
+      AND (LENGTH(TRIM(c.dst)) <= ? OR c.dst IS NULL OR c.dst = '')
+    ORDER BY c.calldate DESC
+  `, [startTime, endTime, minLength]);
+
+  return rows.map(row => ({
+    callId: row.uniqueid,
+    linkedid: row.linkedid,
+    clientNumber: row.src,
+    destination: row.dst,
+    startTime: row.calldate,
+    endTime: row.calldate,
+    status: row.disposition === 'ANSWERED' ? 'answered' : 
+            row.disposition === 'NOANSWER' ? 'no_answer' :
+            row.disposition === 'BUSY' ? 'busy' :
+            row.disposition === 'FAILED' ? 'failed' : 'unknown',
+    duration: row.billsec || 0,
+    waitTime: null,
+    recordingFile: row.recordingfile,
+    dcontext: row.dcontext,
+    channel: row.channel
+  }));
+}
+
+// Функция получения исходящих звонков из CDR
+async function getOutboundCalls(conn, startTime, endTime) {
+  // Исходящие звонки: включаем исходящие маршруты и внутренние звонки
+  // Дополнительный критерий: номер назначения (dst) длиннее минимальной длины для исходящих
+  // Основной критерий: dcontext является исходящим маршрутом или внутренним
+  const minLength = CALL_FILTER_CONFIG.outboundMinLength;
+  const [rows] = await conn.execute(`
+    SELECT 
+      c.calldate, c.uniqueid, c.linkedid, c.src, c.dst, 
+      c.disposition, c.billsec, c.duration, c.recordingfile,
+      c.dcontext, c.channel, c.lastapp, c.lastdata
+    FROM asteriskcdrdb.cdr c
+    WHERE c.calldate >= ? 
+      AND c.calldate <= ?
+      AND (
+        c.dcontext LIKE 'outbound%' 
+        OR c.dcontext LIKE 'from-internal%'
+        OR c.dcontext LIKE 'ext-local%'
+        OR c.channel LIKE 'Local/%'
+        OR (LENGTH(TRIM(c.dst)) > ? AND c.dst IS NOT NULL AND c.dst != '')
+      )
+    ORDER BY c.calldate DESC
+  `, [startTime, endTime, minLength]);
+
+  return rows.map(row => ({
+    callId: row.uniqueid,
+    linkedid: row.linkedid,
+    clientNumber: row.src,
+    destination: row.dst,
+    startTime: row.calldate,
+    endTime: row.calldate,
+    status: row.disposition === 'ANSWERED' ? 'answered' : 
+            row.disposition === 'NOANSWER' ? 'no_answer' :
+            row.disposition === 'BUSY' ? 'busy' :
+            row.disposition === 'FAILED' ? 'failed' : 'unknown',
+    duration: row.billsec || 0,
+    waitTime: null,
+    recordingFile: row.recordingfile,
+    dcontext: row.dcontext,
+    channel: row.channel
+  }));
+}
+
 // Функция проверки перезвонов (исправленная версия)
-async function checkCallbacks(conn, call) {
+async function checkCallbacks(conn, call, queueName) {
   // Проверяем только пропущенные звонки
   // Звонок считается пропущенным если:
   // 1. status === 'abandoned'
@@ -503,25 +658,71 @@ async function checkCallbacks(conn, call) {
 
   try {
     // Проверка 1: Перезвонил сам (входящий звонок от клиента)
-    // Ищем ВСЕ успешно отвеченные звонки от этого номера в течение 2 часов
-    // Не ограничиваемся очередью, так как перезвон может быть не через очередь
-    const [clientCallbackRows] = await conn.execute(`
+    // СНАЧАЛА проверяем в той же очереди (queuelog + cdr)
+    // Если не найдено, тогда ищем во всей базе CDR
+    let clientCallbackRows = [];
+    
+    // 1.1. Ищем в той же очереди
+    // ВАЖНО: Номер клиента находится в ENTERQUEUE (data2), а не в COMPLETECALLER/COMPLETEAGENT
+    // Поэтому делаем JOIN с ENTERQUEUE событием для получения номера клиента
+    // ВАЖНО: Исключаем оригинальный звонок (q.callid != call.callId)
+    const [queueCallbackRows] = await conn.execute(`
       SELECT 
+        q.time, q.event, q.callid, q.queuename,
         c.calldate, c.uniqueid, c.billsec, c.disposition,
-        c.recordingfile, c.src, c.dst, c.dcontext
-      FROM asteriskcdrdb.cdr c
-      WHERE c.calldate >= ? 
-        AND c.calldate <= ?
+        c.recordingfile, c.src, c.dst,
+        e.data2 as clientNumber
+      FROM asteriskcdrdb.queuelog q
+      INNER JOIN asteriskcdrdb.queuelog e ON q.callid = e.callid AND e.event = 'ENTERQUEUE'
+      INNER JOIN asteriskcdrdb.cdr c ON q.callid = c.linkedid
+      WHERE q.queuename = ?
+        AND q.time >= ? 
+        AND q.time <= ?
+        AND q.event IN ('COMPLETECALLER', 'COMPLETEAGENT')
         AND c.disposition = 'ANSWERED'
         AND c.billsec >= 5
+        AND q.callid != ?
         AND (
-          c.src LIKE ? OR c.src LIKE ? OR 
-          RIGHT(c.src, 10) = ? OR RIGHT(c.src, 9) = ? OR
-          c.src = ?
+          e.data2 LIKE ? OR e.data2 LIKE ? OR 
+          RIGHT(e.data2, 10) = ? OR RIGHT(e.data2, 9) = ? OR
+          e.data2 = ?
         )
-      ORDER BY c.calldate ASC
+      ORDER BY q.time ASC
       LIMIT 1
-    `, [callbackStartStr, callbackEndStr, `%${clientNumberLast10}`, `%${clientNumberLast9}`, clientNumberLast10, clientNumberLast9, clientNumberStr]);
+    `, [queueName, callbackStartStr, callbackEndStr, call.callId, `%${clientNumberLast10}`, `%${clientNumberLast9}`, clientNumberLast10, clientNumberLast9, clientNumberStr]);
+    
+    if (queueCallbackRows && queueCallbackRows.length > 0) {
+      clientCallbackRows = queueCallbackRows;
+      console.log(`[checkCallbacks] ✅ Найден перезвон в очереди для ${call.callId}`);
+    } else {
+      // 1.2. Если не найдено в очереди, ищем во всей базе CDR
+      // ВАЖНО: ищем только ВХОДЯЩИЕ звонки (исключаем исходящие)
+      const [cdrCallbackRows] = await conn.execute(`
+        SELECT 
+          c.calldate, c.uniqueid, c.billsec, c.disposition,
+          c.recordingfile, c.src, c.dst, c.dcontext
+        FROM asteriskcdrdb.cdr c
+        WHERE c.calldate >= ? 
+          AND c.calldate <= ?
+          AND c.disposition = 'ANSWERED'
+          AND c.billsec >= 5
+          AND (
+            c.src LIKE ? OR c.src LIKE ? OR 
+            RIGHT(c.src, 10) = ? OR RIGHT(c.src, 9) = ? OR
+            c.src = ?
+          )
+          AND c.dcontext NOT LIKE 'outbound%'
+          AND c.dcontext NOT LIKE 'from-internal%'
+          AND c.dcontext NOT LIKE 'ext-local%'
+        ORDER BY c.calldate ASC
+        LIMIT 1
+      `, [callbackStartStr, callbackEndStr, `%${clientNumberLast10}`, `%${clientNumberLast9}`, clientNumberLast10, clientNumberLast9, clientNumberStr]);
+      
+      if (cdrCallbackRows && cdrCallbackRows.length > 0) {
+        clientCallbackRows = cdrCallbackRows;
+        console.log(`[checkCallbacks] ✅ Найден перезвон в CDR (не в очереди) для ${call.callId}`);
+      }
+    }
 
     if (clientCallbackRows && clientCallbackRows.length > 0) {
       const callback = clientCallbackRows[0];
@@ -605,10 +806,18 @@ async function checkCallbacks(conn, call) {
 }
 
 // Функции расчета статистики
-function calculateStats(calls) {
+function calculateStats(calls, viewType = 'queue') {
   const totalCalls = calls.length;
-  const answeredCalls = calls.filter(c => c.status !== 'abandoned').length;
-  const abandonedCalls = totalCalls - answeredCalls;
+  
+  // Для входящих/исходящих используем disposition из CDR
+  let answeredCalls, abandonedCalls;
+  if (viewType === 'inbound' || viewType === 'outbound') {
+    answeredCalls = calls.filter(c => c.status === 'answered').length;
+    abandonedCalls = calls.filter(c => c.status === 'no_answer' || c.status === 'busy' || c.status === 'failed').length;
+  } else {
+    answeredCalls = calls.filter(c => c.status !== 'abandoned').length;
+    abandonedCalls = totalCalls - answeredCalls;
+  }
   
   const waitTimes = calls.map(call => 
     call.waitTime || helpers.calculateWaitTime(call)).filter(t => t !== '-');
@@ -621,29 +830,40 @@ function calculateStats(calls) {
     ? Math.round(durations.reduce((a, b) => a + parseInt(b), 0) / durations.length)
     : 0;
 
-  // SLA: звонки, принятые в первые 20 секунд
+  // SLA: звонки, принятые в первые 20 секунд (только для очередей)
   const slaThreshold = 20; // секунд
-  const slaCalls = calls.filter(call => {
-    if (call.status === 'abandoned') return false;
-    const waitTime = call.waitTime || helpers.calculateWaitTime(call);
-    return waitTime !== '-' && parseInt(waitTime) <= slaThreshold;
-  }).length;
-  const slaRate = totalCalls > 0 ? Math.round(slaCalls / totalCalls * 100) : 0;
+  let slaCalls = 0;
+  let slaRate = 0;
+  let avgQueueTime = 0;
+  
+  if (viewType === 'queue') {
+    slaCalls = calls.filter(call => {
+      if (call.status === 'abandoned') return false;
+      const waitTime = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
+      return waitTime !== '-' && waitTime !== null && parseInt(waitTime) <= slaThreshold;
+    }).length;
+    slaRate = totalCalls > 0 ? Math.round(slaCalls / totalCalls * 100) : 0;
 
-  // Среднее время в очереди для всех звонков
-  const allWaitTimes = calls.map(call => {
-    const wt = call.waitTime || helpers.calculateWaitTime(call);
-    return wt !== '-' ? parseInt(wt) : null;
-  }).filter(t => t !== null);
-  const avgQueueTime = allWaitTimes.length > 0
-    ? Math.round(allWaitTimes.reduce((a, b) => a + b, 0) / allWaitTimes.length)
-    : 0;
+    // Среднее время в очереди для всех звонков
+    const allWaitTimes = calls.map(call => {
+      const wt = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
+      return wt !== '-' && wt !== null ? parseInt(wt) : null;
+    }).filter(t => t !== null);
+    avgQueueTime = allWaitTimes.length > 0
+      ? Math.round(allWaitTimes.reduce((a, b) => a + b, 0) / allWaitTimes.length)
+      : 0;
+  }
 
   // Пиковый час и разбивка по часам
   const callsByHour = {};
   for (let i = 0; i < 24; i++) {
-    callsByHour[i] = { total: 0, answered: 0, abandoned: 0 };
+    callsByHour[i] = { total: 0, answered: 0, abandoned: 0, noCallbacks: 0 };
   }
+  
+  // Считаем перезвоны ТОЛЬКО для пропущенных звонков (status === 'abandoned')
+  // Это важно, т.к. checkCallbacks вызывается и для некоторых звонков, которые потом успешно завершились
+  const clientCallbacks = calls.filter(c => c.status === 'abandoned' && c.callbackStatus === 'Перезвонил сам').length;
+  const agentCallbacks = calls.filter(c => c.status === 'abandoned' && c.callbackStatus === 'Перезвонили мы').length;
   
   calls.forEach(call => {
     if (call.startTime) {
@@ -651,6 +871,12 @@ function calculateStats(calls) {
       callsByHour[hour].total++;
       if (call.status === 'abandoned') {
         callsByHour[hour].abandoned++;
+        // "Не обработан" - только те пропущенные, у которых НЕТ перезвонов
+        // Используем ту же логику, что и в общей статистике
+        const hasCallback = call.callbackStatus === 'Перезвонил сам' || call.callbackStatus === 'Перезвонили мы';
+        if (!hasCallback) {
+          callsByHour[hour].noCallbacks++;
+        }
       } else {
         callsByHour[hour].answered++;
       }
@@ -667,31 +893,62 @@ function calculateStats(calls) {
   });
   const peakHourFormatted = peakHour !== null ? `${peakHour.toString().padStart(2, '0')}:00` : '-';
 
-  // Среднее ожидание для отвеченных звонков
-  const answeredWaitTimes = calls
-    .filter(c => c.status !== 'abandoned')
-    .map(call => {
-      const wt = call.waitTime || helpers.calculateWaitTime(call);
-      if (wt === '-' || wt === null || wt === undefined) return null;
-      const parsed = parseInt(wt);
-      return isNaN(parsed) ? null : parsed;
-    })
-    .filter(t => t !== null && !isNaN(t));
-  const avgWaitTimeAnswered = answeredWaitTimes.length > 0
-    ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
-    : 0;
+  // Среднее ожидание для отвеченных звонков (только для очередей)
+  let avgWaitTimeAnswered = 0;
+  if (viewType === 'queue') {
+    const answeredWaitTimes = calls
+      .filter(c => c.status !== 'abandoned')
+      .map(call => {
+        const wt = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
+        if (wt === '-' || wt === null || wt === undefined) return null;
+        const parsed = parseInt(wt);
+        return isNaN(parsed) ? null : parsed;
+      })
+      .filter(t => t !== null && !isNaN(t));
+    avgWaitTimeAnswered = answeredWaitTimes.length > 0
+      ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
+      : 0;
+  }
 
-  // Статистика перезвонов
-  const clientCallbacks = calls.filter(c => c.callbackStatus === 'Перезвонил сам').length;
-  const agentCallbacks = calls.filter(c => c.callbackStatus === 'Перезвонили мы').length;
-  
+  // Статистика перезвонов (уже посчитаны выше для callsByHour)
   // "Не обработан" = все пропущенные звонки минус те, у которых есть перезвоны
   // Используем abandonedCalls из статистики, чтобы логика была согласована
   const noCallbacks = Math.max(0, abandonedCalls - clientCallbacks - agentCallbacks);
   
+  // Профессиональные метрики колл-центра
+  // ASA (Average Speed of Answer) - среднее время ответа на звонок
+  // Рассчитывается только для отвеченных звонков
+  let asa = 0;
+  if (viewType === 'queue') {
+    const answeredWaitTimes = calls
+      .filter(c => c.status !== 'abandoned')
+      .map(call => {
+        const wt = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
+        if (wt === '-' || wt === null || wt === undefined) return null;
+        const parsed = parseInt(wt);
+        return isNaN(parsed) ? null : parsed;
+      })
+      .filter(t => t !== null && !isNaN(t));
+    asa = answeredWaitTimes.length > 0
+      ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
+      : 0;
+  } else {
+    // Для входящих/исходящих используем avgWaitTime
+    asa = avgWaitTime;
+  }
+  
+  // Abandon Rate - процент пропущенных звонков
+  const abandonRate = totalCalls > 0 
+    ? Math.round((abandonedCalls / totalCalls) * 100 * 10) / 10 // Округляем до 1 знака после запятой
+    : 0;
+  
   // Отладочная информация
   const abandonedCount = calls.filter(c => c.status === 'abandoned').length;
   const withCallbackStatus = calls.filter(c => c.callbackStatus).length;
+  
+  // Проверка согласованности данных графика и статистики
+  const totalNoCallbacksFromChart = Object.values(callsByHour).reduce((sum, hour) => sum + hour.noCallbacks, 0);
+  
   console.log('Статистика перезвонов:', {
     clientCallbacks,
     agentCallbacks,
@@ -701,7 +958,9 @@ function calculateStats(calls) {
     totalAbandoned: abandonedCount,
     withCallbackStatus,
     totalCalls: calls.length,
-    check: `clientCallbacks(${clientCallbacks}) + agentCallbacks(${agentCallbacks}) + noCallbacks(${noCallbacks}) = ${clientCallbacks + agentCallbacks + noCallbacks}, должно быть ${abandonedCalls}`
+    check: `clientCallbacks(${clientCallbacks}) + agentCallbacks(${agentCallbacks}) + noCallbacks(${noCallbacks}) = ${clientCallbacks + agentCallbacks + noCallbacks}, должно быть ${abandonedCalls}`,
+    chartNoCallbacks: totalNoCallbacksFromChart,
+    match: noCallbacks === totalNoCallbacksFromChart ? '✅ Совпадает' : `❌ Не совпадает (статистика: ${noCallbacks}, график: ${totalNoCallbacksFromChart})`
   });
 
   return {
@@ -721,7 +980,10 @@ function calculateStats(calls) {
     // Статистика перезвонов
     clientCallbacks,
     agentCallbacks,
-    noCallbacks
+    noCallbacks,
+    // Профессиональные метрики
+    asa, // Average Speed of Answer (секунды)
+    abandonRate // Abandon Rate (%)
   };
 }
 
@@ -729,6 +991,7 @@ function calculateStats(calls) {
 initializeApp().then(() => {
   app.listen(PORT, () => {
     console.log(`Сервер запущен на http://localhost:${PORT}`);
+    console.log(`Конфигурация фильтрации: минимальная длина номера для исходящих = ${CALL_FILTER_CONFIG.outboundMinLength}`);
   });
 }).catch(err => {
   console.error('Ошибка при инициализации:', err);

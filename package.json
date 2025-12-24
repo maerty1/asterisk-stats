@@ -1,8 +1,22 @@
 {
-  "name": "call-stats",
+  "name": "asterisk-stats",
   "version": "1.0.0",
-  "description": "Call Center Statistics Application",
+  "description": "Asterisk Queue Analytics with callback tracking",
   "main": "app.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maerty1/asterisk-stats.git"
+  },
+  "keywords": [
+    "asterisk",
+    "call-center",
+    "statistics",
+    "queue",
+    "analytics",
+    "callback-tracking"
+  ],
+  "author": "maerty1",
+  "license": "MIT",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js"

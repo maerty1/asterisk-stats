@@ -1,4 +1,57 @@
+# Dependencies
 node_modules/
+package-lock.json
+
+# Environment variables
 .env
-/screen/screenshot1.png
-/screen/screenshot2.png
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+test.html
+screen/
+
+# Documentation (temporary)
+CALLBACK_ANALYSIS.md
+DIAGNOSTIC_CHECK.md
+FINAL_CHECK.md
+FINAL_FIX.md
+FINAL_WEB_CHECK.md
+FIXES_SUMMARY.md
+JS_FIX.md
+PROBLEMS_REPORT.md
+PROJECT_CHECK.md
+SECURITY_FIXES.md
+STATIC_FILES_FIX.md
+STYLING_UNIFIED.md
+TABLE_FIX_FINAL.md
+TABLE_FIX.md
+TABLE_REWRITE.md
+TEST_FINAL.md
+TEST_RESULTS.md
+WEB_CHECK.md
+WEB_FIX_SUMMARY.md
+README
+
+# Git
+.git/cursor/
