@@ -2,6 +2,7 @@ require('dotenv').config();
 const nodemailer = require('nodemailer');
 const { format, subDays } = require('date-fns');
 const { ru } = require('date-fns/locale');
+const { execute: dbExecute } = require('./db-optimizer');
 
 // Конфигурация SMTP
 const createTransporter = () => {
@@ -335,15 +336,15 @@ async function generateDailyReport(pool, date, callFunctions) {
 
   try {
     // Получаем список всех очередей
-    const [queues] = await pool.execute(`
+    const [queues] = await dbExecute(`
       SELECT DISTINCT queuename 
       FROM asteriskcdrdb.queuelog 
       WHERE queuename IS NOT NULL AND queuename != 'NONE'
       ORDER BY queuename
     `);
 
-    // Статистика по каждой очереди
-    for (const queueRow of queues) {
+    // Статистика по каждой очереди (параллельная обработка для ускорения)
+    const queueStatsPromises = queues.map(async (queueRow) => {
       const queueName = queueRow.queuename;
       const calls = await getQueueCalls(pool, queueName, startTime, endTime);
       
@@ -371,11 +372,15 @@ async function generateDailyReport(pool, date, callFunctions) {
       }
       
       const stats = calculateStats(calls, 'queue');
-      reportData.queues.push({
+      return {
         name: queueName,
         ...stats
-      });
-    }
+      };
+    });
+    
+    // Ждем завершения обработки всех очередей
+    const queueStats = await Promise.all(queueStatsPromises);
+    reportData.queues = queueStats;
 
     // Статистика по входящим звонкам
     const inboundCalls = await getInboundCalls(pool, startTime, endTime);
@@ -669,7 +674,7 @@ async function sendQueueReport(reportData, queueName, pool) {
 
   // Получаем email адреса для этой очереди из базы данных
   try {
-    const [emailRows] = await pool.execute(`
+    const [emailRows] = await dbExecute(`
       SELECT email
       FROM asteriskcdrdb.email_reports
       WHERE queue_name = ? AND is_active = TRUE

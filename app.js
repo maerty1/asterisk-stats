@@ -1,37 +1,36 @@
 require('dotenv').config();
 const express = require('express');
-const mysql = require('mysql2/promise');
 const { format, subDays } = require('date-fns');
 const path = require('path');
 const fs = require('fs');
 const compression = require('compression');
 
+// Используем оптимизированный модуль для работы с БД (аналог PDO в PHP)
+// Кэширует prepared statements и оптимизирует запросы
+const { pool, execute: dbExecute, getPoolStats } = require('./db-optimizer');
+
+// Модуль параллельных запросов для максимального использования CPU MySQL
+const { 
+  getQueueCallsParallel, 
+  getInboundCallsParallel, 
+  getOutboundCallsParallel,
+  checkCallbacksParallel,
+  PARALLEL_CONFIG 
+} = require('./db-parallel');
+
+// Модуль оптимизированных запросов для больших данных в MariaDB
+const {
+  getQueueCallsOptimized,
+  getInboundCallsOptimized,
+  checkCallbacksOptimized
+} = require('./db-large-data');
+
+// Флаги использования оптимизаций
+const USE_PARALLEL_QUERIES = process.env.USE_PARALLEL_QUERIES !== 'false';
+const USE_LARGE_DATA_OPTIMIZATION = process.env.USE_LARGE_DATA_OPTIMIZATION === 'true';
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Конфигурация базы данных
-const DB_CONFIG = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'freepbxuser',
-  password: process.env.DB_PASS || 'XCbMZ1TmmqGS',
-  database: process.env.DB_NAME || 'asterisk',
-  connectionLimit: 10, // Увеличено для лучшей производительности
-  queueLimit: 0, // Без ограничения очереди
-  waitForConnections: true,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 0
-};
-
-// Создаем пул соединений для оптимизации
-const pool = mysql.createPool(DB_CONFIG);
-
-// Обработка ошибок пула
-pool.on('error', (err) => {
-  console.error('Ошибка пула соединений MySQL:', err);
-  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-    console.log('Переподключение к базе данных...');
-  }
-});
 
 // Конфигурация фильтрации звонков
 const CALL_FILTER_CONFIG = {
@@ -41,6 +40,8 @@ const CALL_FILTER_CONFIG = {
 };
 
 let availableQueues = [];
+let queuesCacheTime = 0;
+const QUEUES_CACHE_TTL = parseInt(process.env.QUEUES_CACHE_TTL) || 3600000; // 1 час по умолчанию
 
 // Middleware
 app.use(compression()); // Сжатие gzip
@@ -154,28 +155,53 @@ const helpers = {
 
 // Инициализация приложения
 async function initializeApp() {
+  await refreshQueuesCache();
+  
+  // Выводим статистику пула при старте
+  if (process.env.DEBUG_DB === 'true') {
+    console.log('📊 Статистика пула соединений:', getPoolStats());
+  }
+}
+
+// Функция обновления кэша очередей
+async function refreshQueuesCache() {
   try {
-    const [queues] = await pool.execute(`
+    const [queues] = await dbExecute(`
       SELECT DISTINCT queuename 
       FROM asteriskcdrdb.queuelog 
       WHERE queuename IS NOT NULL AND queuename != 'NONE'
       ORDER BY queuename
     `);
     availableQueues = queues.map(q => q.queuename);
+    queuesCacheTime = Date.now();
     console.log('Загружено очередей:', availableQueues.length);
   } catch (err) {
     console.error('Ошибка при загрузке очередей:', err);
   }
 }
 
+// Функция получения списка очередей с кэшированием
+function getAvailableQueues() {
+  const now = Date.now();
+  if (now - queuesCacheTime > QUEUES_CACHE_TTL) {
+    // Асинхронно обновляем кэш, но возвращаем текущий список
+    refreshQueuesCache().catch(err => {
+      console.error('Ошибка при обновлении кэша очередей:', err);
+    });
+  }
+  return availableQueues;
+}
+
 // API для проверки статуса системы (добавлен перед основными маршрутами)
 app.get('/api/status', async (req, res) => {
   try {
-    await pool.execute('SELECT 1 as test');
+    await dbExecute('SELECT 1 as test');
     
+    const poolStats = getPoolStats();
     res.json({
       status: 'online',
       database: 'connected',
+      pool: poolStats,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
@@ -203,7 +229,7 @@ app.get('/', (req, res) => {
   const params = getFilterParams(req);
   res.render('index', { 
     title: 'Анализатор очередей Asterisk',
-    queues: availableQueues,
+    queues: getAvailableQueues(),
     results: null,
     startDate: params.startDate,
     endDate: params.endDate,
@@ -217,7 +243,7 @@ app.get('/inbound', (req, res) => {
   const params = getFilterParams(req);
   res.render('index', { 
     title: 'Входящие звонки - Asterisk Analytics',
-    queues: availableQueues,
+    queues: getAvailableQueues(),
     results: null,
     startDate: params.startDate,
     endDate: params.endDate,
@@ -231,7 +257,7 @@ app.get('/outbound', (req, res) => {
   const params = getFilterParams(req);
   res.render('index', { 
     title: 'Исходящие звонки - Asterisk Analytics',
-    queues: availableQueues,
+    queues: getAvailableQueues(),
     results: null,
     startDate: params.startDate,
     endDate: params.endDate,
@@ -249,7 +275,7 @@ app.get('/outbound', (req, res) => {
 app.get('/api/email-reports/:queueName', async (req, res) => {
   try {
     const { queueName } = req.params;
-    const [rows] = await pool.execute(`
+    const [rows] = await dbExecute(`
       SELECT id, queue_name, email, is_active, created_at, updated_at
       FROM asteriskcdrdb.email_reports
       WHERE queue_name = ?
@@ -266,7 +292,7 @@ app.get('/api/email-reports/:queueName', async (req, res) => {
 // Получить все email адреса (для всех очередей)
 app.get('/api/email-reports', async (req, res) => {
   try {
-    const [rows] = await pool.execute(`
+    const [rows] = await dbExecute(`
       SELECT id, queue_name, email, is_active, created_at, updated_at
       FROM asteriskcdrdb.email_reports
       ORDER BY queue_name, created_at DESC
@@ -300,7 +326,7 @@ app.post('/api/email-reports', async (req, res) => {
       });
     }
     
-    const [result] = await pool.execute(`
+    const [result] = await dbExecute(`
       INSERT INTO asteriskcdrdb.email_reports (queue_name, email, is_active)
       VALUES (?, ?, TRUE)
       ON DUPLICATE KEY UPDATE is_active = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -323,7 +349,7 @@ app.patch('/api/email-reports/:id', async (req, res) => {
     const { id } = req.params;
     const { is_active } = req.body;
     
-    await pool.execute(`
+    await dbExecute(`
       UPDATE asteriskcdrdb.email_reports
       SET is_active = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -341,7 +367,7 @@ app.delete('/api/email-reports/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    await pool.execute(`
+    await dbExecute(`
       DELETE FROM asteriskcdrdb.email_reports
       WHERE id = ?
     `, [id]);
@@ -439,13 +465,30 @@ app.post('/report', async (req, res) => {
     
     let calls = [];
     
+    // Выбираем оптимальный метод запроса в зависимости от размера данных
     if (viewType === 'inbound') {
-      calls = await getInboundCalls(pool, startTime, endTime);
+      if (USE_LARGE_DATA_OPTIMIZATION) {
+        calls = await getInboundCallsOptimized(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
+      } else if (USE_PARALLEL_QUERIES) {
+        calls = await getInboundCallsParallel(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
+      } else {
+        calls = await getInboundCalls(pool, startTime, endTime);
+      }
     } else if (viewType === 'outbound') {
-      calls = await getOutboundCalls(pool, startTime, endTime);
+      if (USE_PARALLEL_QUERIES) {
+        calls = await getOutboundCallsParallel(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
+      } else {
+        calls = await getOutboundCalls(pool, startTime, endTime);
+      }
     } else {
       // viewType === 'queue'
-      calls = await getQueueCalls(pool, queue_name, startTime, endTime);
+      if (USE_LARGE_DATA_OPTIMIZATION) {
+        calls = await getQueueCallsOptimized(queue_name, startTime, endTime);
+      } else if (USE_PARALLEL_QUERIES) {
+        calls = await getQueueCallsParallel(queue_name, startTime, endTime);
+      } else {
+        calls = await getQueueCalls(pool, queue_name, startTime, endTime);
+      }
     }
     
     // Проверяем перезвоны для очередей и входящих звонков
@@ -453,26 +496,26 @@ app.post('/report', async (req, res) => {
     let abandonedCount = 0;
     
     if (viewType === 'queue') {
-      // Собираем все пропущенные звонки
+      // Оптимизированная фильтрация пропущенных звонков (один проход)
       const abandonedCalls = [];
-      for (let i = 0; i < calls.length; i++) {
-        const isAbandoned = calls[i].status === 'abandoned' || 
-                            (calls[i].duration && parseInt(calls[i].duration) <= 5) ||
-                            (!calls[i].connectTime && calls[i].endTime && calls[i].status !== 'completed_by_agent' && calls[i].status !== 'completed_by_caller');
+      calls.forEach((call, i) => {
+        const isAbandoned = call.status === 'abandoned' || 
+                            (call.duration && parseInt(call.duration) <= 5) ||
+                            (!call.connectTime && call.endTime && call.status !== 'completed_by_agent' && call.status !== 'completed_by_caller');
         
         if (isAbandoned) {
           abandonedCount++;
-          abandonedCalls.push({ index: i, call: calls[i] });
+          abandonedCalls.push({ index: i, call });
         }
-      }
+      });
       
       // Оптимизированная проверка перезвонов - batch-запрос
       if (abandonedCalls.length > 0) {
         const callbacks = await checkCallbacksBatch(pool, abandonedCalls.map(ac => ac.call), queue_name);
         
-        // Применяем результаты
-        abandonedCalls.forEach(({ index, call }, idx) => {
-          const callback = callbacks[idx];
+        // Применяем результаты (оптимизировано)
+        callbacks.forEach((callback, idx) => {
+          const { index } = abandonedCalls[idx];
           if (callback) {
             calls[index].callback = callback;
             calls[index].callbackStatus = callback.status;
@@ -490,28 +533,28 @@ app.post('/report', async (req, res) => {
         console.log(`Проверено перезвонов: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
       }
     } else if (viewType === 'inbound') {
-      // Собираем все пропущенные входящие звонки
+      // Оптимизированная фильтрация пропущенных входящих звонков (один проход)
       const abandonedCalls = [];
-      for (let i = 0; i < calls.length; i++) {
+      calls.forEach((call, i) => {
         // Для входящих: пропущенный = не отвечен (no_answer) или занято (busy) или неудачно (failed)
-        const isAbandoned = calls[i].status === 'no_answer' || 
-                            calls[i].status === 'busy' || 
-                            calls[i].status === 'failed' ||
-                            (calls[i].duration && parseInt(calls[i].duration) <= 5);
+        const isAbandoned = call.status === 'no_answer' || 
+                            call.status === 'busy' || 
+                            call.status === 'failed' ||
+                            (call.duration && parseInt(call.duration) <= 5);
         
         if (isAbandoned) {
           abandonedCount++;
-          abandonedCalls.push({ index: i, call: calls[i] });
+          abandonedCalls.push({ index: i, call });
         }
-      }
+      });
       
       // Проверка перезвонов для входящих звонков
       if (abandonedCalls.length > 0) {
         const callbacks = await checkCallbacksBatchInbound(pool, abandonedCalls.map(ac => ac.call));
         
-        // Применяем результаты
-        abandonedCalls.forEach(({ index, call }, idx) => {
-          const callback = callbacks[idx];
+        // Применяем результаты (оптимизировано)
+        callbacks.forEach((callback, idx) => {
+          const { index } = abandonedCalls[idx];
           if (callback) {
             calls[index].callback = callback;
             calls[index].callbackStatus = callback.status;
@@ -536,7 +579,7 @@ app.post('/report', async (req, res) => {
       title: viewType === 'inbound' ? 'Входящие звонки - Asterisk Analytics' : 
              viewType === 'outbound' ? 'Исходящие звонки - Asterisk Analytics' : 
              `Отчет по очереди ${queue_name}`,
-      queues: availableQueues,
+      queues: getAvailableQueues(),
       selectedQueue: queue_name || '',
       results: { 
         calls: calls.slice(0, 10000),
@@ -774,7 +817,7 @@ async function getQueueCalls(conn, queueName, startTime, endTime) {
         break;
     }
   });
-  
+
   return Object.values(calls);
 }
 
@@ -782,6 +825,7 @@ async function getQueueCalls(conn, queueName, startTime, endTime) {
 async function getInboundCalls(conn, startTime, endTime) {
   // Входящие звонки: звонок от длинного номера (src > 4) на короткий номер (dst <= 4)
   // Логика: длинный номер (источник, внешний) -> короткий номер (назначение, внутренний)
+  // ОПТИМИЗАЦИЯ: убрали LENGTH(TRIM(...)) из WHERE для использования индексов
   const minLength = CALL_FILTER_CONFIG.outboundMinLength;
   const [rows] = await conn.execute(`
     SELECT 
@@ -795,8 +839,8 @@ async function getInboundCalls(conn, startTime, endTime) {
       AND c.src != ''
       AND c.dst IS NOT NULL 
       AND c.dst != ''
-      AND LENGTH(TRIM(c.src)) > ?
-      AND LENGTH(TRIM(c.dst)) <= ?
+      AND CHAR_LENGTH(c.src) > ?
+      AND CHAR_LENGTH(c.dst) <= ?
     ORDER BY c.calldate DESC
   `, [startTime, endTime, minLength, minLength]);
 
@@ -840,8 +884,10 @@ async function getOutboundCalls(conn, startTime, endTime) {
   // Исходящие звонки определяются по полю outbound_cnum (как в PHP версии)
   // Условия: LENGTH(outbound_cnum) >= 4 AND lastapp != 'Hangup'
   // ДОПОЛНИТЕЛЬНО: исключаем внутренние звонки (dst <= 4) - исходящие должны быть на длинные номера
+  // ОПТИМИЗАЦИЯ: убрали LENGTH(TRIM(...)) из WHERE для использования индексов
   const minLength = CALL_FILTER_CONFIG.outboundMinLength;
-  const [rows] = await conn.execute(`
+  const executeFn = conn === pool ? dbExecute : conn.execute.bind(conn);
+  const [rows] = await executeFn(`
     SELECT 
       c.calldate, c.uniqueid, c.linkedid, c.src, c.dst, 
       c.disposition, c.billsec, c.duration, c.recordingfile,
@@ -852,11 +898,11 @@ async function getOutboundCalls(conn, startTime, endTime) {
       AND c.calldate <= ?
       AND c.outbound_cnum IS NOT NULL 
       AND c.outbound_cnum != ''
-      AND LENGTH(TRIM(c.outbound_cnum)) >= ?
+      AND CHAR_LENGTH(c.outbound_cnum) >= ?
       AND (c.lastapp IS NULL OR c.lastapp != 'Hangup')
       AND c.dst IS NOT NULL
       AND c.dst != ''
-      AND LENGTH(TRIM(c.dst)) > ?
+      AND CHAR_LENGTH(c.dst) > ?
     ORDER BY c.calldate DESC
   `, [startTime, endTime, minLength, minLength]);
 
@@ -1000,117 +1046,133 @@ async function checkCallbacksBatch(conn, calls, queueName) {
       }
     });
 
-    // 2. Batch-запрос для поиска перезвонов в CDR (client callbacks, если не найдено в очереди)
+    // 2. и 3. ПАРАЛЛЕЛЬНАЯ обработка: поиск перезвонов в CDR (клиент и агент одновременно)
     const callsWithoutQueueCallback = validCalls.filter(vc => !queueCallbackMap.has(vc.originalIndex));
     
-    if (callsWithoutQueueCallback.length > 0) {
-      const [cdrClientCallbacks] = await conn.execute(`
-        SELECT 
-          c.calldate, c.uniqueid, c.billsec, c.disposition,
-          c.recordingfile, c.src, c.dst, c.dcontext,
-          c.src as matched_number
-        FROM asteriskcdrdb.cdr c
-        WHERE c.disposition = 'ANSWERED'
-          AND c.billsec >= 5
-          AND c.dcontext NOT LIKE 'outbound%'
-          AND c.dcontext NOT LIKE 'from-internal%'
-          AND c.dcontext NOT LIKE 'ext-local%'
-          AND (
-            ${callsWithoutQueueCallback.map((vc, idx) => `
-              (c.calldate >= ? AND c.calldate <= ? AND (
-                c.src LIKE ? OR c.src LIKE ? OR 
-                RIGHT(c.src, 10) = ? OR RIGHT(c.src, 9) = ? OR
-                c.src = ?
-              ))
-            `).join(' OR ')}
-          )
-        ORDER BY c.calldate ASC
-      `, callsWithoutQueueCallback.flatMap(vc => [
-        vc.callbackStart, vc.callbackEnd,
-        `%${vc.clientNumberLast10}`, `%${vc.clientNumberLast9}`,
-        vc.clientNumberLast10, vc.clientNumberLast9, vc.clientNumber
-      ]));
-
-      // Добавляем найденные перезвоны в CDR
-      cdrClientCallbacks.forEach(cb => {
-        const matchedCall = callsWithoutQueueCallback.find(vc => {
-          if (cb.calldate < vc.callbackStart || cb.calldate > vc.callbackEnd) return false;
-          
-          const cbSrc = String(cb.src || '').trim();
-          if (!cbSrc) return false;
-          
-          return cbSrc === vc.clientNumber ||
-                 cbSrc.slice(-10) === vc.clientNumberLast10 ||
-                 cbSrc.slice(-9) === vc.clientNumberLast9 ||
-                 vc.clientNumber.slice(-10) === cbSrc.slice(-10) ||
-                 vc.clientNumber.slice(-9) === cbSrc.slice(-9);
-        });
-        if (matchedCall) {
-          const originalIdx = matchedCall.originalIndex;
-          if (!queueCallbackMap.has(originalIdx)) {
-            queueCallbackMap.set(originalIdx, cb);
-          }
-        }
-      });
-    }
-
-    // 3. Batch-запрос для поиска перезвонов от агентов
-    const callsWithoutClientCallback = validCalls.filter(vc => !queueCallbackMap.has(vc.originalIndex));
+    // Создаем Map для быстрого поиска по номеру и времени (оптимизация)
+    const validCallsMap = new Map();
+    validCalls.forEach(vc => {
+      const key = `${vc.clientNumber}|${vc.callbackStart}|${vc.callbackEnd}`;
+      if (!validCallsMap.has(key)) {
+        validCallsMap.set(key, []);
+      }
+      validCallsMap.get(key).push(vc);
+    });
     
-    if (callsWithoutClientCallback.length > 0) {
-      const [cdrAgentCallbacks] = await conn.execute(`
-        SELECT 
-          c.calldate, c.uniqueid, c.billsec, c.disposition,
-          c.recordingfile, c.src, c.dst, c.dcontext,
-          c.dst as matched_number
-        FROM asteriskcdrdb.cdr c
-        WHERE c.disposition = 'ANSWERED'
-          AND c.billsec >= 5
-          AND (
-            ${callsWithoutClientCallback.map((vc, idx) => `
-              (c.calldate >= ? AND c.calldate <= ? AND (
-                c.dst LIKE ? OR c.dst LIKE ? OR 
-                RIGHT(c.dst, 10) = ? OR RIGHT(c.dst, 9) = ? OR
-                c.dst = ?
-              ))
-            `).join(' OR ')}
-          )
-        ORDER BY c.calldate ASC
-      `, callsWithoutClientCallback.flatMap(vc => [
-        vc.callbackStart, vc.callbackEnd,
-        `%${vc.clientNumberLast10}`, `%${vc.clientNumberLast9}`,
-        vc.clientNumberLast10, vc.clientNumberLast9, vc.clientNumber
-      ]));
+    if (callsWithoutQueueCallback.length > 0) {
+      // Параллельно выполняем оба запроса
+      const [cdrClientCallbacks, cdrAgentCallbacks] = await Promise.all([
+        // Запрос для перезвонов от клиента
+        executeFn(`
+          SELECT 
+            c.calldate, c.uniqueid, c.billsec, c.disposition,
+            c.recordingfile, c.src, c.dst, c.dcontext,
+            c.src as matched_number
+          FROM asteriskcdrdb.cdr c
+          WHERE c.disposition = 'ANSWERED'
+            AND c.billsec >= 5
+            AND c.dcontext NOT LIKE 'outbound%'
+            AND c.dcontext NOT LIKE 'from-internal%'
+            AND c.dcontext NOT LIKE 'ext-local%'
+            AND (
+              ${callsWithoutQueueCallback.map((vc, idx) => `
+                (c.calldate >= ? AND c.calldate <= ? AND (
+                  c.src LIKE ? OR c.src LIKE ? OR 
+                  RIGHT(c.src, 10) = ? OR RIGHT(c.src, 9) = ? OR
+                  c.src = ?
+                ))
+              `).join(' OR ')}
+            )
+          ORDER BY c.calldate ASC
+        `, callsWithoutQueueCallback.flatMap(vc => [
+          vc.callbackStart, vc.callbackEnd,
+          `%${vc.clientNumberLast10}`, `%${vc.clientNumberLast9}`,
+          vc.clientNumberLast10, vc.clientNumberLast9, vc.clientNumber
+        ])),
+        // Запрос для перезвонов от агента
+        executeFn(`
+          SELECT 
+            c.calldate, c.uniqueid, c.billsec, c.disposition,
+            c.recordingfile, c.src, c.dst, c.dcontext,
+            c.dst as matched_number
+          FROM asteriskcdrdb.cdr c
+          WHERE c.disposition = 'ANSWERED'
+            AND c.billsec >= 5
+            AND (
+              ${callsWithoutQueueCallback.map((vc, idx) => `
+                (c.calldate >= ? AND c.calldate <= ? AND (
+                  c.dst LIKE ? OR c.dst LIKE ? OR 
+                  RIGHT(c.dst, 10) = ? OR RIGHT(c.dst, 9) = ? OR
+                  c.dst = ?
+                ))
+              `).join(' OR ')}
+            )
+          ORDER BY c.calldate ASC
+        `, callsWithoutQueueCallback.flatMap(vc => [
+          vc.callbackStart, vc.callbackEnd,
+          `%${vc.clientNumberLast10}`, `%${vc.clientNumberLast9}`,
+          vc.clientNumberLast10, vc.clientNumberLast9, vc.clientNumber
+        ]))
+      ]);
 
-      // Создаем мапу перезвонов от агентов
-      const agentCallbackMap = new Map();
-      cdrAgentCallbacks.forEach(cb => {
-        const matchedCall = callsWithoutClientCallback.find(vc => {
-          if (cb.calldate < vc.callbackStart || cb.calldate > vc.callbackEnd) return false;
+      // Оптимизированная обработка результатов с использованием Map
+      const callsWithoutQueueCallbackMap = new Map();
+      callsWithoutQueueCallback.forEach(vc => {
+        callsWithoutQueueCallbackMap.set(vc.originalIndex, vc);
+      });
+
+      // Обработка перезвонов от клиента (приоритет)
+      cdrClientCallbacks[0].forEach(cb => {
+        const cbSrc = String(cb.src || '').trim();
+        if (!cbSrc) return;
+        
+        // Быстрый поиск по Map
+        callsWithoutQueueCallback.forEach(vc => {
+          if (queueCallbackMap.has(vc.originalIndex)) return;
+          if (cb.calldate < vc.callbackStart || cb.calldate > vc.callbackEnd) return;
           
-          const cbDst = String(cb.dst || '').trim();
-          if (!cbDst) return false;
+          const matches = cbSrc === vc.clientNumber ||
+                       cbSrc.slice(-10) === vc.clientNumberLast10 ||
+                       cbSrc.slice(-9) === vc.clientNumberLast9 ||
+                       vc.clientNumber.slice(-10) === cbSrc.slice(-10) ||
+                       vc.clientNumber.slice(-9) === cbSrc.slice(-9);
           
-          return cbDst === vc.clientNumber ||
-                 cbDst.slice(-10) === vc.clientNumberLast10 ||
-                 cbDst.slice(-9) === vc.clientNumberLast9 ||
-                 vc.clientNumber.slice(-10) === cbDst.slice(-10) ||
-                 vc.clientNumber.slice(-9) === cbDst.slice(-9);
+          if (matches && !queueCallbackMap.has(vc.originalIndex)) {
+            queueCallbackMap.set(vc.originalIndex, cb);
+          }
         });
-        if (matchedCall && !agentCallbackMap.has(matchedCall.originalIndex)) {
-          agentCallbackMap.set(matchedCall.originalIndex, cb);
-        }
+      });
+
+      // Обработка перезвонов от агента (только если не найден перезвон от клиента)
+      const agentCallbackMap = new Map();
+      cdrAgentCallbacks[0].forEach(cb => {
+        const cbDst = String(cb.dst || '').trim();
+        if (!cbDst) return;
+        
+        callsWithoutQueueCallback.forEach(vc => {
+          if (queueCallbackMap.has(vc.originalIndex)) return;
+          if (cb.calldate < vc.callbackStart || cb.calldate > vc.callbackEnd) return;
+          
+          const matches = cbDst === vc.clientNumber ||
+                         cbDst.slice(-10) === vc.clientNumberLast10 ||
+                         cbDst.slice(-9) === vc.clientNumberLast9 ||
+                         vc.clientNumber.slice(-10) === cbDst.slice(-10) ||
+                         vc.clientNumber.slice(-9) === cbDst.slice(-9);
+          
+          if (matches && !agentCallbackMap.has(vc.originalIndex)) {
+            agentCallbackMap.set(vc.originalIndex, cb);
+          }
+        });
       });
 
       // Применяем результаты перезвонов от агентов
       agentCallbackMap.forEach((cb, idx) => {
-        const vc = validCalls.find(v => v.originalIndex === idx);
-        if (vc && !queueCallbackMap.has(idx)) {
+        if (!queueCallbackMap.has(idx)) {
           results[idx] = {
             type: 'agent_callback',
             status: 'Перезвонили мы',
             callbackTime: cb.calldate,
-            recordingFile: cb.recordingfile || vc.call.recordingFile
+            recordingFile: cb.recordingfile || callsWithoutQueueCallbackMap.get(idx)?.call.recordingFile
           };
         }
       });
@@ -1541,54 +1603,109 @@ async function checkCallbacks(conn, call, queueName) {
   }
 }
 
-// Функции расчета статистики
+// Функции расчета статистики (оптимизированная версия - один проход по массиву)
 function calculateStats(calls, viewType = 'queue') {
   const totalCalls = calls.length;
-  
-  // Для входящих/исходящих используем disposition из CDR
-  let answeredCalls, abandonedCalls;
-  if (viewType === 'inbound' || viewType === 'outbound') {
-    answeredCalls = calls.filter(c => c.status === 'answered').length;
-    abandonedCalls = calls.filter(c => c.status === 'no_answer' || c.status === 'busy' || c.status === 'failed').length;
-  } else {
-    answeredCalls = calls.filter(c => c.status !== 'abandoned').length;
-    abandonedCalls = totalCalls - answeredCalls;
+  if (totalCalls === 0) {
+    return {
+      totalCalls: 0,
+      answeredCalls: 0,
+      abandonedCalls: 0,
+      answerRate: 0,
+      avgWaitTime: 0,
+      avgWaitTimeAnswered: 0,
+      avgDuration: 0,
+      slaRate: 0,
+      slaCalls: 0,
+      avgQueueTime: 0,
+      peakHour: '-',
+      peakHourCalls: 0,
+      callsByHour: {},
+      clientCallbacks: 0,
+      agentCallbacks: 0,
+      noCallbacks: 0,
+      asa: 0,
+      abandonRate: 0
+    };
   }
   
-  const waitTimes = calls.map(call => 
-    call.waitTime || helpers.calculateWaitTime(call)).filter(t => t !== '-');
+  // ОПТИМИЗАЦИЯ: один проход по массиву вместо множественных filter/map
+  let answeredCalls = 0;
+  let abandonedCalls = 0;
+  const waitTimes = [];
+  const durations = [];
+  const answeredWaitTimes = [];
+  const allWaitTimes = [];
+  let slaCalls = 0;
+  
+  const isAbandonedCall = (call) => {
+    if (viewType === 'inbound') {
+      return call.status === 'no_answer' || call.status === 'busy' || call.status === 'failed' ||
+             (call.duration && parseInt(call.duration) <= 5);
+    } else if (viewType === 'outbound') {
+      return call.status === 'no_answer' || call.status === 'busy' || call.status === 'failed';
+    } else {
+      return call.status === 'abandoned';
+    }
+  };
+  
+  // Один проход для всех расчетов
+  calls.forEach(call => {
+    const isAbandoned = isAbandonedCall(call);
+    
+    if (viewType === 'inbound' || viewType === 'outbound') {
+      if (call.status === 'answered') {
+        answeredCalls++;
+      } else if (isAbandoned) {
+        abandonedCalls++;
+      }
+    } else {
+      if (!isAbandoned) {
+        answeredCalls++;
+      } else {
+        abandonedCalls++;
+      }
+    }
+    
+    // Собираем waitTimes
+    const waitTime = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
+    if (waitTime !== '-' && waitTime !== null && waitTime !== undefined) {
+      const parsed = parseInt(waitTime);
+      if (!isNaN(parsed)) {
+        waitTimes.push(parsed);
+        allWaitTimes.push(parsed);
+        
+        if (!isAbandoned) {
+          answeredWaitTimes.push(parsed);
+          if (viewType === 'queue' && parsed <= 20) {
+            slaCalls++;
+          }
+        }
+      }
+    }
+    
+    // Собираем durations
+    if (call.duration) {
+      durations.push(parseInt(call.duration) || 0);
+    }
+  });
+  
   const avgWaitTime = waitTimes.length > 0 
-    ? Math.round(waitTimes.reduce((a, b) => a + parseInt(b), 0) / waitTimes.length)
+    ? Math.round(waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length)
     : 0;
   
-  const durations = calls.map(call => call.duration).filter(d => d);
   const avgDuration = durations.length > 0
-    ? Math.round(durations.reduce((a, b) => a + parseInt(b), 0) / durations.length)
+    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
     : 0;
 
   // SLA: звонки, принятые в первые 20 секунд (только для очередей)
-  const slaThreshold = 20; // секунд
-  let slaCalls = 0;
-  let slaRate = 0;
-  let avgQueueTime = 0;
+  // Уже посчитано выше в одном проходе
+  const slaRate = viewType === 'queue' && totalCalls > 0 ? Math.round(slaCalls / totalCalls * 100) : 0;
   
-  if (viewType === 'queue') {
-    slaCalls = calls.filter(call => {
-      if (call.status === 'abandoned') return false;
-      const waitTime = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
-      return waitTime !== '-' && waitTime !== null && parseInt(waitTime) <= slaThreshold;
-    }).length;
-    slaRate = totalCalls > 0 ? Math.round(slaCalls / totalCalls * 100) : 0;
-
-    // Среднее время в очереди для всех звонков
-    const allWaitTimes = calls.map(call => {
-      const wt = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
-      return wt !== '-' && wt !== null ? parseInt(wt) : null;
-    }).filter(t => t !== null);
-    avgQueueTime = allWaitTimes.length > 0
-      ? Math.round(allWaitTimes.reduce((a, b) => a + b, 0) / allWaitTimes.length)
-      : 0;
-  }
+  // Среднее время в очереди для всех звонков (уже посчитано выше)
+  const avgQueueTime = allWaitTimes.length > 0
+    ? Math.round(allWaitTimes.reduce((a, b) => a + b, 0) / allWaitTimes.length)
+    : 0;
 
   // Пиковый час и разбивка по часам
   const callsByHour = {};
@@ -1596,21 +1713,18 @@ function calculateStats(calls, viewType = 'queue') {
     callsByHour[i] = { total: 0, answered: 0, abandoned: 0, noCallbacks: 0 };
   }
   
-  // Считаем перезвоны ТОЛЬКО для пропущенных звонков (status === 'abandoned')
-  // Это важно, т.к. checkCallbacks вызывается и для некоторых звонков, которые потом успешно завершились
-  // Для очередей: пропущенные = abandoned
-  // Для входящих: пропущенные = no_answer, busy, failed
-  const isAbandonedCall = (call) => {
-    if (viewType === 'inbound') {
-      return call.status === 'no_answer' || call.status === 'busy' || call.status === 'failed' ||
-             (call.duration && parseInt(call.duration) <= 5);
-    } else {
-      return call.status === 'abandoned';
+  // Считаем перезвоны ТОЛЬКО для пропущенных звонков (оптимизировано - один проход)
+  let clientCallbacks = 0;
+  let agentCallbacks = 0;
+  calls.forEach(call => {
+    if (isAbandonedCall(call)) {
+      if (call.callbackStatus === 'Перезвонил сам') {
+        clientCallbacks++;
+      } else if (call.callbackStatus === 'Перезвонили мы') {
+        agentCallbacks++;
+      }
     }
-  };
-  
-  const clientCallbacks = calls.filter(c => isAbandonedCall(c) && c.callbackStatus === 'Перезвонил сам').length;
-  const agentCallbacks = calls.filter(c => isAbandonedCall(c) && c.callbackStatus === 'Перезвонили мы').length;
+  });
   
   calls.forEach(call => {
     if (call.startTime) {
@@ -1644,22 +1758,10 @@ function calculateStats(calls, viewType = 'queue') {
   });
   const peakHourFormatted = peakHour !== null ? `${peakHour.toString().padStart(2, '0')}:00` : '-';
 
-  // Среднее ожидание для отвеченных звонков (только для очередей)
-  let avgWaitTimeAnswered = 0;
-  if (viewType === 'queue') {
-    const answeredWaitTimes = calls
-      .filter(c => c.status !== 'abandoned')
-      .map(call => {
-        const wt = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
-        if (wt === '-' || wt === null || wt === undefined) return null;
-        const parsed = parseInt(wt);
-        return isNaN(parsed) ? null : parsed;
-      })
-      .filter(t => t !== null && !isNaN(t));
-    avgWaitTimeAnswered = answeredWaitTimes.length > 0
-      ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
-      : 0;
-  }
+  // Среднее ожидание для отвеченных звонков (уже посчитано выше в одном проходе)
+  const avgWaitTimeAnswered = viewType === 'queue' && answeredWaitTimes.length > 0
+    ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
+    : avgWaitTime;
 
   // Статистика перезвонов (уже посчитаны выше для callsByHour)
   // "Не обработан" = все пропущенные звонки минус те, у которых есть перезвоны
@@ -1667,26 +1769,8 @@ function calculateStats(calls, viewType = 'queue') {
   const noCallbacks = Math.max(0, abandonedCalls - clientCallbacks - agentCallbacks);
   
   // Профессиональные метрики колл-центра
-  // ASA (Average Speed of Answer) - среднее время ответа на звонок
-  // Рассчитывается только для отвеченных звонков
-  let asa = 0;
-  if (viewType === 'queue') {
-    const answeredWaitTimes = calls
-      .filter(c => c.status !== 'abandoned')
-      .map(call => {
-        const wt = call.waitTime || (helpers && helpers.calculateWaitTime ? helpers.calculateWaitTime(call) : null);
-        if (wt === '-' || wt === null || wt === undefined) return null;
-        const parsed = parseInt(wt);
-        return isNaN(parsed) ? null : parsed;
-      })
-      .filter(t => t !== null && !isNaN(t));
-    asa = answeredWaitTimes.length > 0
-      ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
-      : 0;
-  } else {
-    // Для входящих/исходящих используем avgWaitTime
-    asa = avgWaitTime;
-  }
+  // ASA (Average Speed of Answer) - среднее время ответа на звонок (уже посчитано выше)
+  const asa = avgWaitTimeAnswered;
   
   // Abandon Rate - процент пропущенных звонков
   const abandonRate = totalCalls > 0 
@@ -1770,7 +1854,7 @@ function initializeEmailReports() {
       const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd');
       
       // Получаем список всех очередей с активными email адресами
-      const [queuesWithEmails] = await pool.execute(`
+      const [queuesWithEmails] = await dbExecute(`
         SELECT DISTINCT queue_name
         FROM asteriskcdrdb.email_reports
         WHERE is_active = TRUE
@@ -1784,8 +1868,8 @@ function initializeEmailReports() {
       let successCount = 0;
       let errorCount = 0;
       
-      // Отправляем отчет для каждой очереди отдельно
-      for (const queueRow of queuesWithEmails) {
+      // Отправляем отчет для каждой очереди параллельно (оптимизация)
+      const reportPromises = queuesWithEmails.map(async (queueRow) => {
         const queueName = queueRow.queue_name;
         try {
           console.log(`📧 Генерация отчета для очереди ${queueName}...`);
@@ -1794,16 +1878,31 @@ function initializeEmailReports() {
           
           if (result.success) {
             console.log(`✅ Отчет для очереди ${queueName} успешно отправлен`);
-            successCount++;
+            return { success: true, queueName };
           } else {
             console.error(`❌ Ошибка отправки отчета для очереди ${queueName}:`, result.error);
-            errorCount++;
+            return { success: false, queueName, error: result.error };
           }
         } catch (error) {
           console.error(`❌ Ошибка при генерации/отправке отчета для очереди ${queueName}:`, error);
-          errorCount++;
+          return { success: false, queueName, error: error.message };
         }
-      }
+      });
+      
+      // Ждем завершения всех отчетов
+      const results = await Promise.allSettled(reportPromises);
+      results.forEach((result, idx) => {
+        if (result.status === 'fulfilled') {
+          if (result.value.success) {
+            successCount++;
+          } else {
+            errorCount++;
+          }
+        } else {
+          errorCount++;
+          console.error(`❌ Ошибка при обработке очереди ${queuesWithEmails[idx].queue_name}:`, result.reason);
+        }
+      });
       
       console.log(`📧 Итоги отправки отчетов: успешно ${successCount}, ошибок ${errorCount}`);
     } catch (error) {

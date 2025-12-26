@@ -41,8 +41,8 @@
     "author": {
       "@type": "Organization",
       "name": "Asterisk Analytics Team"
+      }
     }
-  }
   </script>
 </head>
 <body>
@@ -163,7 +163,7 @@
         <!-- Call Center Statistics Header -->
         <section class="stats-header-section">
           <div class="section-header">
-            </div>
+              </div>
 
           <!-- Dashboard стиль статистики -->
           <div class="stats-dashboard">
@@ -204,12 +204,12 @@
                     <span class="stat-secondary-icon">↩️</span>
                     <span class="stat-secondary-label">Перезвонил сам:</span>
                     <span class="stat-secondary-value"><%= results.stats.clientCallbacks || 0 %></span>
-                  </div>
+              </div>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">📞</span>
                     <span class="stat-secondary-label">Перезвонили мы:</span>
                     <span class="stat-secondary-value"><%= results.stats.agentCallbacks || 0 %></span>
-                  </div>
+              </div>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">⏸️</span>
                     <span class="stat-secondary-label">Не обработан:</span>
@@ -220,8 +220,8 @@
                     %>
                     <span class="stat-secondary-value"><%= notProcessed >= 0 ? notProcessed : 0 %></span>
                   </div>
-                </div>
               </div>
+            </div>
 
               <div class="stats-secondary-group">
                 <h4 class="stats-secondary-title">Время</h4>
@@ -239,7 +239,7 @@
                       %>
                       <%= displayValue %>
                     </span>
-                  </div>
+              </div>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">💬</span>
                     <span class="stat-secondary-label">Среднее время разговора:</span>
@@ -251,17 +251,17 @@
                       %>
                       <%= avgDurMin %>:<%= avgDurSecStr %>
                     </span>
-                  </div>
+              </div>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">📊</span>
                     <span class="stat-secondary-label">Среднее время в очереди:</span>
                     <span class="stat-secondary-value"><%= results.stats.avgQueueTime %> сек</span>
-                  </div>
+              </div>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">📈</span>
                     <span class="stat-secondary-label">Пиковый час:</span>
                     <span class="stat-secondary-value"><%= results.stats.peakHour %></span>
-                  </div>
+            </div>
                   <% if (typeof viewType === 'undefined' || viewType === 'queue') { %>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">⚡</span>
@@ -275,16 +275,16 @@
                       %>
                       <%= asaMin %>:<%= asaSecStr %>
                     </span>
-                  </div>
+              </div>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">📉</span>
                     <span class="stat-secondary-label">Abandon Rate:</span>
                     <span class="stat-secondary-value"><%= results.stats.abandonRate || 0 %>%</span>
-                  </div>
+              </div>
                   <% } %>
-                </div>
               </div>
             </div>
+          </div>
           </div>
         </section>
 
@@ -295,23 +295,23 @@
               <div class="hourly-chart-container">
                 <div class="hourly-chart-svg" id="hourly-chart">
                   <!-- SVG график будет сгенерирован JavaScript -->
-              </div>
+      </div>
                 <div class="chart-tooltip" id="chart-tooltip" style="display: none;">
                   <div class="tooltip-time" id="tooltip-time"></div>
                   <div class="tooltip-stats">
                     <div class="tooltip-stat">
                       <span class="tooltip-label">Всего:</span>
                       <span class="tooltip-value" id="tooltip-total">0</span>
-              </div>
+      </div>
                     <div class="tooltip-stat">
                       <span class="tooltip-label answered">Отвеченные:</span>
                       <span class="tooltip-value" id="tooltip-answered">0</span>
-              </div>
+    </div>
                     <div class="tooltip-stat">
                       <span class="tooltip-label abandoned">Не обработан:</span>
                       <span class="tooltip-value" id="tooltip-abandoned">0</span>
-            </div>
-          </div>
+  </div>
+  </div>
       </div>
       </div>
             </section>
@@ -329,7 +329,7 @@
                       <option value="50">50</option>
                       <option value="100">100</option>
                     </select>
-  </div>
+    </div>
                   <div class="table-search">
                     <input type="text" id="table-search" placeholder="Поиск по номеру, статусу...">
     </div>
@@ -479,7 +479,7 @@
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && emailModal.style.display === 'flex') {
           closeModal();
-        }
+  }
       });
       
       // Загрузка списка email адресов для выбранной очереди
@@ -705,10 +705,10 @@ document.addEventListener('DOMContentLoaded', function() {
               queue: queueSelect ? queueSelect.value : ''
             };
             localStorage.setItem('asteriskStatsFilters', JSON.stringify(filters));
-          }
+      }
         } catch (e) {
           console.error('Ошибка при восстановлении фильтров:', e);
-        }
+    }
       }
       
       // Восстанавливаем фильтры при загрузке страницы
