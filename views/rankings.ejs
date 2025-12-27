@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/css/style.css?v=<%= Date.now() %>">
+</head>
+<body>
+  <div class="app-container">
+  <header class="header">
+      <div class="header-content">
+        <div class="logo-section">
+          <div class="logo-icon">🏆</div>
+          <div class="logo-text">
+            <h1>Рейтинг очередей</h1>
+            <div class="logo-subtitle">Сравнение производительности</div>
+          </div>
+        </div>
+        <div class="header-status-group">
+          <a href="/" class="view-selector-btn" style="text-decoration: none; display: inline-flex; margin-right: 10px;">
+            ← Назад к отчетам
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Форма фильтров -->
+      <section class="stats-header-section">
+        <form method="POST" action="/rankings" id="rankings-form">
+        <div class="header-form-grid">
+          <div class="form-field">
+            <label for="start_date" class="form-label">Начало периода</label>
+            <input type="date" id="start_date" name="start_date" value="<%= startDate %>" required>
+            </div>
+          <div class="form-field">
+            <label for="end_date" class="form-label">Конец периода</label>
+            <input type="date" id="end_date" name="end_date" value="<%= endDate %>" required>
+            </div>
+            <div class="form-field">
+              <label for="sortBy" class="form-label">Критерий сортировки</label>
+              <select id="sortBy" name="sortBy">
+                <option value="composite" <%= sortBy === 'composite' ? 'selected' : '' %>>Комплексный рейтинг</option>
+                <option value="answerRate" <%= sortBy === 'answerRate' ? 'selected' : '' %>>По проценту ответа</option>
+                <option value="sla" <%= sortBy === 'sla' ? 'selected' : '' %>>По SLA (20 сек)</option>
+                <option value="volume" <%= sortBy === 'volume' ? 'selected' : '' %>>По объему звонков</option>
+                <option value="abandonRate" <%= sortBy === 'abandonRate' ? 'selected' : '' %>>По проценту пропущенных</option>
+                <option value="asa" <%= sortBy === 'asa' ? 'selected' : '' %>>По среднему времени ответа</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label for="departmentFilter" class="form-label">Фильтр по отделу</label>
+              <select id="departmentFilter" name="departmentFilter">
+                <option value="">Все отделы</option>
+                <option value="OP" <%= (typeof departmentFilter !== 'undefined' && departmentFilter === 'OP') ? 'selected' : '' %>>ОП</option>
+                <option value="Recepcia" <%= (typeof departmentFilter !== 'undefined' && departmentFilter === 'Recepcia') ? 'selected' : '' %>>Рецепция</option>
+                <option value="Kommun" <%= (typeof departmentFilter !== 'undefined' && departmentFilter === 'Kommun') ? 'selected' : '' %>>Коммун центр</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <button type="submit" class="btn-primary">Показать рейтинг</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Результаты рейтинга -->
+      <section id="rankings-results" style="display: none;">
+          <div class="stats-dashboard">
+          <h2 id="rankings-title"></h2>
+          <div id="rankings-table-container"></div>
+          </div>
+        </section>
+
+      <!-- Сообщение о загрузке -->
+      <section id="loading-message" style="text-align: center; padding: 40px; display: block;">
+        <div style="font-size: 18px; color: #666;">⏳ Загрузка рейтинга...</div>
+            </section>
+
+      <!-- Сообщение об ошибке -->
+      <section id="error-message" style="text-align: center; padding: 40px; display: none;">
+        <div style="font-size: 18px; color: #d32f2f;">❌ <span id="error-text"></span></div>
+            </section>
+  </main>
+    </div>
+
+  <script>
+    // Обработка формы
+    document.getElementById('rankings-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const formData = new FormData(e.target);
+      const data = {
+        start_date: formData.get('start_date'),
+        end_date: formData.get('end_date'),
+        sortBy: formData.get('sortBy') || 'composite',
+        departmentFilter: formData.get('departmentFilter') || null
+      };
+      
+      console.log('Отправляем данные:', data);
+      
+      // Показываем загрузку
+      document.getElementById('loading-message').style.display = 'block';
+      document.getElementById('rankings-results').style.display = 'none';
+      document.getElementById('error-message').style.display = 'none';
+      
+      try {
+        const response = await fetch('/rankings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        console.log('Результат API:', result);
+        
+        if (result.success) {
+          if (result.rankings && result.rankings.length > 0) {
+            displayRankings(result.rankings, result.sortBy, result.period, result);
+          } else {
+            console.warn('Пустой массив рейтингов:', result);
+            document.getElementById('error-text').textContent = 'Нет данных за выбранный период. Попробуйте выбрать другой период.';
+            document.getElementById('error-message').style.display = 'block';
+            document.getElementById('loading-message').style.display = 'none';
+          }
+        } else {
+          throw new Error(result.error || 'Ошибка при загрузке рейтинга');
+        }
+      } catch (error) {
+        document.getElementById('error-text').textContent = error.message;
+        document.getElementById('error-message').style.display = 'block';
+        document.getElementById('loading-message').style.display = 'none';
+      }
+    });
+
+    function displayRankings(rankings, sortBy, period) {
+      const container = document.getElementById('rankings-table-container');
+      const title = document.getElementById('rankings-title');
+      
+      const sortLabels = {
+        composite: 'Комплексный рейтинг',
+        answerRate: 'Процент ответа',
+        sla: 'SLA (20 сек)',
+        volume: 'Объем звонков',
+        abandonRate: 'Процент пропущенных',
+        asa: 'Среднее время ответа'
+      };
+      
+      title.textContent = `Рейтинг очередей по критерию: ${sortLabels[sortBy] || 'Комплексный рейтинг'} (${period.start} - ${period.end})`;
+      
+      let html = `
+        <table class="data-table" style="width: 100%; margin-top: 20px;">
+          <thead>
+            <tr>
+              <th style="width: 60px;">Ранг</th>
+              <th>Очередь</th>
+            <th>Отдел</th>
+              <th>Звонков</th>
+              <th>Ответ</th>
+              <th>SLA</th>
+              <th>Пропущено</th>
+              <th>ASA</th>
+              <th>Комплексный рейтинг</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      rankings.forEach((queue, index) => {
+        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+        const rankClass = index < 3 ? 'top-rank' : '';
+        
+        html += `
+          <tr class="${rankClass}">
+            <td style="text-align: center; font-weight: bold;">
+              ${medal} ${queue.rank}
+            </td>
+            <td><strong>${queue.queueDisplayName || queue.queueName}</strong></td>
+            <td style="text-align: center;">${queue.department || 'Не указан'}</td>
+            <td style="text-align: center;">${queue.totalCalls}</td>
+            <td style="text-align: center;">
+              <span style="color: ${queue.answerRate >= 80 ? '#4caf50' : queue.answerRate >= 60 ? '#ff9800' : '#f44336'};">
+                ${queue.answerRate}%
+              </span>
+              <small style="display: block; color: #666;">${queue.answeredCalls} из ${queue.totalCalls}</small>
+            </td>
+            <td style="text-align: center;">
+              <span style="color: ${queue.slaRate >= 80 ? '#4caf50' : queue.slaRate >= 60 ? '#ff9800' : '#f44336'};">
+                ${queue.slaRate}%
+              </span>
+            </td>
+            <td style="text-align: center;">
+              <span style="color: ${queue.abandonRate <= 10 ? '#4caf50' : queue.abandonRate <= 20 ? '#ff9800' : '#f44336'};">
+                ${queue.abandonRate}%
+              </span>
+              <small style="display: block; color: #666;">${queue.abandonedCalls} звонков</small>
+            </td>
+            <td style="text-align: center;">${formatTime(queue.asa)}</td>
+            <td style="text-align: center;">
+              <strong style="font-size: 18px; color: ${queue.compositeScore >= 80 ? '#4caf50' : queue.compositeScore >= 60 ? '#ff9800' : '#f44336'};">
+                ${queue.compositeScore.toFixed(1)}
+              </strong>
+            </td>
+          </tr>
+        `;
+      });
+      
+      html += `
+          </tbody>
+        </table>
+      `;
+      
+      container.innerHTML = html;
+      document.getElementById('rankings-results').style.display = 'block';
+      document.getElementById('loading-message').style.display = 'none';
+    }
+
+    function formatTime(seconds) {
+      if (!seconds) return '0:00';
+      const min = Math.floor(seconds / 60);
+      const sec = seconds % 60;
+      return `${min}:${sec.toString().padStart(2, '0')}`;
+    }
+
+    // Автозагрузка при загрузке страницы
+    window.addEventListener('DOMContentLoaded', () => {
+      // Автоматически отправляем запрос с текущими значениями формы
+      const form = document.getElementById('rankings-form');
+      if (form) {
+        // Небольшая задержка для полной загрузки страницы
+        setTimeout(() => {
+          const formEvent = new Event('submit', { bubbles: true, cancelable: true });
+          form.dispatchEvent(formEvent);
+        }, 200);
+      }
+    });
+  </script>
+
+  <style>
+    .top-rank {
+      background-color: #fff9c4;
+    }
+    .top-rank:hover {
+      background-color: #fff59d;
+    }
+    .data-table th {
+      background-color: #f5f5f5;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #ddd;
+    }
+    .data-table td {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+    }
+    .data-table tr:hover {
+      background-color: #f9f9f9;
+    }
+  </style>
+</body>
+</html>

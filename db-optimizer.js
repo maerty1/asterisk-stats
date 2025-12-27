@@ -1,49 +1,15 @@
 /**
  * Модуль оптимизации работы с БД (аналог PDO в PHP)
- * Кэширует prepared statements для максимальной производительности
+ * Теперь использует систему адаптеров для поддержки различных ORM/коннекторов
  */
 
-const mysql = require('mysql2/promise');
+const { getAdapter } = require('./db-factory');
 
-// Кэш prepared statements (как в PDO)
+// Получаем адаптер БД (mysql2 по умолчанию или из DB_ADAPTER)
+const adapter = getAdapter();
+
+// Кэш prepared statements (для совместимости, работает только с mysql2)
 const statementCache = new Map();
-
-// Конфигурация базы данных (оптимизированная для производительности)
-const DB_CONFIG = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'freepbxuser',
-  password: process.env.DB_PASS || 'XCbMZ1TmmqGS',
-  database: process.env.DB_NAME || 'asterisk',
-  connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT) || 20,
-  queueLimit: 0,
-  waitForConnections: true,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 0,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  // Оптимизации для максимальной производительности (как PDO)
-  multipleStatements: false, // Безопасность
-  dateStrings: false, // Использовать Date объекты
-  supportBigNumbers: true,
-  bigNumberStrings: false,
-  // Настройки для prepared statements
-  typeCast: true, // Автоматическое приведение типов
-  // Оптимизация сетевых параметров
-  reconnect: true,
-  maxReconnects: 10,
-  reconnectDelay: 2000
-};
-
-// Создаем пул соединений
-const pool = mysql.createPool(DB_CONFIG);
-
-// Обработка ошибок пула
-pool.on('error', (err) => {
-  console.error('Ошибка пула соединений MySQL:', err);
-  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-    console.log('Переподключение к базе данных...');
-  }
-});
 
 /**
  * Получить или создать prepared statement (кэширование как в PDO)
@@ -56,20 +22,30 @@ async function getPreparedStatement(sql) {
     return statementCache.get(sql);
   }
 
-  // Создаем prepared statement через соединение из пула
-  const connection = await pool.getConnection();
-  try {
-    // В mysql2 prepared statements создаются автоматически при execute
-    // Но мы можем кэшировать сам SQL для оптимизации
+  // Для mysql2 создаем через соединение из пула
+  if (adapter.getPool && adapter.getPool().getConnection) {
+    const connection = await adapter.getConnection();
+    try {
+      statementCache.set(sql, {
+        sql,
+        connection: null, // Будем использовать adapter.execute
+        lastUsed: Date.now()
+      });
+      
+      return statementCache.get(sql);
+    } finally {
+      if (connection.release) {
+        connection.release();
+      }
+    }
+  } else {
+    // Для других адаптеров просто кэшируем SQL
     statementCache.set(sql, {
       sql,
-      connection: null, // Будем использовать pool.execute
+      connection: null,
       lastUsed: Date.now()
     });
-    
     return statementCache.get(sql);
-  } finally {
-    connection.release();
   }
 }
 
@@ -77,103 +53,63 @@ async function getPreparedStatement(sql) {
  * Выполнить запрос с кэшированием prepared statement (как PDO::prepare + execute)
  * @param {string} sql - SQL запрос
  * @param {Array} params - Параметры для запроса
- * @returns {Promise} Результат запроса
+ * @returns {Promise} Результат запроса [rows, fields]
  */
 async function execute(sql, params = []) {
-  const startTime = Date.now();
-  
-  try {
-    // pool.execute автоматически использует prepared statements
-    // и кэширует их на уровне драйвера
-    const [rows, fields] = await pool.execute(sql, params);
-    
-    if (process.env.DEBUG_DB === 'true') {
-      const duration = Date.now() - startTime;
-      console.log(`[DB] ${duration}ms: ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
-    }
-    
-    return [rows, fields];
-  } catch (error) {
-    console.error('[DB Error]', error.message);
-    console.error('[SQL]', sql.substring(0, 200));
-    throw error;
-  }
+  return await adapter.execute(sql, params);
 }
 
 /**
  * Выполнить запрос без prepared statement (для динамических запросов)
  * @param {string} sql - SQL запрос
- * @returns {Promise} Результат запроса
+ * @returns {Promise} Результат запроса [rows, fields]
  */
 async function query(sql) {
-  const startTime = Date.now();
-  
-  try {
-    const [rows, fields] = await pool.query(sql);
-    
-    if (process.env.DEBUG_DB === 'true') {
-      const duration = Date.now() - startTime;
-      console.log(`[DB Query] ${duration}ms: ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
-    }
-    
-    return [rows, fields];
-  } catch (error) {
-    console.error('[DB Query Error]', error.message);
-    console.error('[SQL]', sql.substring(0, 200));
-    throw error;
-  }
+  return await adapter.query(sql);
 }
 
 /**
  * Начать транзакцию (для batch операций)
- * @returns {Promise} Connection для транзакции
+ * @returns {Promise} Connection/Transaction для транзакции
  */
 async function beginTransaction() {
-  const connection = await pool.getConnection();
-  await connection.beginTransaction();
-  return connection;
+  return await adapter.beginTransaction();
 }
 
 /**
  * Выполнить запрос в транзакции
- * @param {Object} connection - Соединение из beginTransaction
+ * @param {Object} transaction - Объект транзакции из beginTransaction
  * @param {string} sql - SQL запрос
  * @param {Array} params - Параметры
- * @returns {Promise} Результат запроса
+ * @returns {Promise} Результат запроса [rows, fields]
  */
-async function executeInTransaction(connection, sql, params = []) {
-  const [rows, fields] = await connection.execute(sql, params);
-  return [rows, fields];
+async function executeInTransaction(transaction, sql, params = []) {
+  return await adapter.executeInTransaction(transaction, sql, params);
 }
 
 /**
  * Закоммитить транзакцию
- * @param {Object} connection - Соединение из beginTransaction
+ * @param {Object} transaction - Объект транзакции из beginTransaction
  */
-async function commit(connection) {
-  await connection.commit();
-  connection.release();
+async function commit(transaction) {
+  return await adapter.commit(transaction);
 }
 
 /**
  * Откатить транзакцию
- * @param {Object} connection - Соединение из beginTransaction
+ * @param {Object} transaction - Объект транзакции из beginTransaction
  */
-async function rollback(connection) {
-  await connection.rollback();
-  connection.release();
+async function rollback(transaction) {
+  return await adapter.rollback(transaction);
 }
 
 /**
  * Получить статистику пула соединений
  */
 function getPoolStats() {
-  return {
-    totalConnections: pool.pool._allConnections?.length || 0,
-    freeConnections: pool.pool._freeConnections?.length || 0,
-    queuedRequests: pool.pool._connectionQueue?.length || 0,
-    cachedStatements: statementCache.size
-  };
+  const stats = adapter.getPoolStats();
+  stats.cachedStatements = statementCache.size;
+  return stats;
 }
 
 /**
@@ -186,14 +122,34 @@ function clearStatementCache() {
 
 /**
  * Получить соединение из пула (для сложных операций)
- * ВАЖНО: Не забудьте вызвать connection.release() после использования!
+ * ВАЖНО: Для некоторых адаптеров может потребоваться release() после использования!
  */
 async function getConnection() {
-  return await pool.getConnection();
+  return await adapter.getConnection();
+}
+
+/**
+ * Получить пул/клиент (для обратной совместимости)
+ */
+function getPool() {
+  try {
+    return adapter.getPool();
+  } catch (error) {
+    // Если адаптер не поддерживает getPool(), возвращаем сам адаптер
+    return adapter;
+  }
+}
+
+// Для обратной совместимости экспортируем pool
+let poolExport;
+try {
+  poolExport = adapter.getPool();
+} catch (error) {
+  poolExport = adapter;
 }
 
 module.exports = {
-  pool,
+  pool: poolExport, // Для обратной совместимости
   execute,
   query,
   beginTransaction,
@@ -202,6 +158,8 @@ module.exports = {
   rollback,
   getConnection,
   getPoolStats,
-  clearStatementCache
+  clearStatementCache,
+  getPool,
+  // Экспортируем адаптер для расширенных возможностей
+  adapter
 };
-

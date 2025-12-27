@@ -212,7 +212,12 @@ async function checkCallbacksOptimized(conn, calls, queueName) {
   }
 
   try {
-    const executeFn = conn === require('./db-optimizer').pool ? dbExecute : conn.execute.bind(conn);
+    // Определяем функцию для выполнения запроса
+    // Если conn - это connection объект с методом execute, используем его
+    // Иначе используем dbExecute из db-optimizer
+    const executeFn = (conn && typeof conn.execute === 'function') 
+      ? conn.execute.bind(conn) 
+      : dbExecute;
     
     // Используем EXISTS вместо JOIN для больших таблиц (быстрее в MariaDB)
     // Разбиваем на чанки для оптимизации

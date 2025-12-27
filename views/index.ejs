@@ -75,17 +75,21 @@
         <div class="quick-filters" style="display: flex; gap: var(--md-spacing-md); align-items: center; flex-wrap: wrap; margin-bottom: var(--md-spacing-md);">
           <!-- Quick Date Filters -->
           <div class="view-selector-group" role="group" aria-label="Быстрый выбор периода">
-            <button type="button" class="view-selector-btn" data-period="today">Сегодня</button>
-            <button type="button" class="view-selector-btn" data-period="yesterday">Вчера</button>
-            <button type="button" class="view-selector-btn" data-period="week">Неделя</button>
-            <button type="button" class="view-selector-btn" data-period="month">Месяц</button>
+            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="today">Сегодня</button>
+            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="yesterday">Вчера</button>
+            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="week">Неделя</button>
+            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="month">Месяц</button>
       </div>
           
           <!-- View Type Selector -->
           <div class="view-selector-group" role="group" aria-label="Выбор типа представления">
             <button type="button" class="view-selector-btn <%= typeof viewType === 'undefined' || viewType === 'queue' ? 'active' : '' %>" data-view="queue" aria-pressed="<%= typeof viewType === 'undefined' || viewType === 'queue' ? 'true' : 'false' %>">
               <span class="view-selector-icon">📞</span>
-              <span class="view-selector-text">По очередям</span>
+              <span class="view-selector-text">Вх очередь</span>
+            </button>
+            <button type="button" class="view-selector-btn <%= viewType === 'outbound_queue' ? 'active' : '' %>" data-view="outbound_queue" aria-pressed="<%= viewType === 'outbound_queue' ? 'true' : 'false' %>">
+              <span class="view-selector-icon">📞</span>
+              <span class="view-selector-text">Исх очереди</span>
             </button>
             <button type="button" class="view-selector-btn <%= viewType === 'inbound' ? 'active' : '' %>" data-view="inbound" aria-pressed="<%= viewType === 'inbound' ? 'true' : 'false' %>">
               <span class="view-selector-icon">📥</span>
@@ -95,14 +99,18 @@
               <span class="view-selector-icon">📤</span>
               <span class="view-selector-text">Исходящие</span>
             </button>
+            <a href="/rankings" class="view-selector-btn" style="text-decoration: none; display: inline-flex;">
+              <span class="view-selector-icon">🏆</span>
+              <span class="view-selector-text">Рейтинг</span>
+            </a>
           </div>
           
           <!-- Action Buttons -->
           <div class="view-selector-group" role="group" aria-label="Действия">
-            <% if (typeof viewType === 'undefined' || viewType === 'queue') { %>
+            <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
             <button type="button" class="view-selector-btn" id="open-email-modal-btn" title="Настройки email рассылки">
               <span class="view-selector-icon">📧</span>
-              <span class="view-selector-text">Настройки email</span>
+              <span class="view-selector-text">Email</span>
             </button>
             <% } %>
             <button type="button" class="view-selector-btn" id="export-btn" title="Экспорт данных">
@@ -115,10 +123,10 @@
         <div class="header-form-grid">
           <div class="form-field">
               <label for="queue_name" class="form-label">Очередь</label>
-            <select id="queue_name" name="queue_name" <%= typeof viewType === 'undefined' || viewType === 'queue' ? 'required' : '' %> <%= typeof viewType !== 'undefined' && (viewType === 'inbound' || viewType === 'outbound') ? 'disabled' : '' %>>
+            <select id="queue_name" name="queue_name" <%= (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') ? 'required' : '' %> <%= typeof viewType !== 'undefined' && (viewType === 'inbound' || viewType === 'outbound') ? 'disabled' : '' %>>
               <% if (queues && queues.length > 0) { %>
                 <% queues.forEach(queue => { %>
-                  <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>><%= queue %></option>
+                  <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>><%= typeof helpers !== 'undefined' && helpers.formatQueueName ? helpers.formatQueueName(queue) : queue %></option>
                 <% }); %>
               <% } else { %>
                 <option value="">Загрузка...</option>
@@ -186,7 +194,7 @@
                 <div class="stat-key-label">Пропущенные</div>
                 <div class="stat-key-desc"><%= results.stats.totalCalls > 0 ? Math.round(results.stats.abandonedCalls / results.stats.totalCalls * 100) : 0 %>% от общего</div>
               </div>
-              <% if (typeof viewType === 'undefined' || viewType === 'queue') { %>
+              <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
               <div class="stat-key stat-key-warning">
                 <div class="stat-key-icon">⏱️</div>
                 <div class="stat-key-value"><%= results.stats.slaRate %>%</div>
@@ -262,7 +270,7 @@
                     <span class="stat-secondary-label">Пиковый час:</span>
                     <span class="stat-secondary-value"><%= results.stats.peakHour %></span>
             </div>
-                  <% if (typeof viewType === 'undefined' || viewType === 'queue') { %>
+                  <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
                   <div class="stat-secondary">
                     <span class="stat-secondary-icon">⚡</span>
                     <span class="stat-secondary-label">ASA:</span>
@@ -397,7 +405,7 @@
               <select id="modal-email-queue-select" class="form-input">
                 <% if (queues && queues.length > 0) { %>
                   <% queues.forEach(queue => { %>
-                    <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>><%= queue %></option>
+                    <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>><%= typeof helpers !== 'undefined' && helpers.formatQueueName ? helpers.formatQueueName(queue) : queue %></option>
                   <% }); %>
                 <% } else { %>
                   <option value="">Загрузка...</option>
@@ -691,7 +699,7 @@ document.addEventListener('DOMContentLoaded', function() {
               // Очередь восстанавливаем всегда, если она есть в сохраненных фильтрах
               // и если мы в представлении очередей (поле не disabled)
               if (queueSelect && filters.queue) {
-                const isQueueView = viewTypeInput && viewTypeInput.value === 'queue';
+                const isQueueView = viewTypeInput && (viewTypeInput.value === 'queue' || viewTypeInput.value === 'outbound_queue');
                 if (isQueueView || !queueSelect.disabled) {
                   queueSelect.value = filters.queue;
                 }
@@ -770,7 +778,7 @@ document.addEventListener('DOMContentLoaded', function() {
           
           // Управляем состоянием поля очереди
           if (queueSelect) {
-            if (viewType === 'queue') {
+            if (viewType === 'queue' || viewType === 'outbound_queue') {
               // Для представления очередей - активируем поле и восстанавливаем значение
               queueSelect.removeAttribute('disabled');
               queueSelect.setAttribute('required', 'required');
@@ -814,7 +822,7 @@ document.addEventListener('DOMContentLoaded', function() {
       // Инициализация состояния при загрузке страницы
       const currentViewType = viewTypeInput ? viewTypeInput.value : 'queue';
       if (queueSelect) {
-        if (currentViewType !== 'queue') {
+        if (currentViewType !== 'queue' && currentViewType !== 'outbound_queue') {
           queueSelect.setAttribute('disabled', 'disabled');
           queueSelect.removeAttribute('required');
         } else {

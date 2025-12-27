@@ -480,6 +480,26 @@ textarea:disabled {
   box-shadow: var(--md-elevation-1);
 }
 
+/* Компактные кнопки быстрого выбора периода - уменьшаем только ширину */
+.quick-date-filter-btn {
+  min-width: auto !important;
+  padding: var(--md-spacing-sm) 8px !important;
+}
+
+/* Компактные кнопки выбора типа представления (Вх очередь, Входящие, Исходящие, Рейтинг) */
+.view-selector-group button[data-view],
+.view-selector-group a.view-selector-btn {
+  min-width: auto !important;
+  padding: var(--md-spacing-sm) 8px !important;
+}
+
+/* Компактные кнопки действий (Email, Экспорт) */
+#open-email-modal-btn,
+#export-btn {
+  min-width: auto !important;
+  padding: var(--md-spacing-sm) 10px !important;
+}
+
 .view-selector-btn:focus-visible {
   outline: 2px solid var(--md-sys-color-primary);
   outline-offset: 2px;
