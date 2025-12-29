@@ -3,10 +3,17 @@
  * Теперь использует систему адаптеров для поддержки различных ORM/коннекторов
  */
 
-const { getAdapter } = require('./db-factory');
+const { getAdapter, resetAdapter } = require('./db-factory');
 
-// Получаем адаптер БД (mysql2 по умолчанию или из DB_ADAPTER)
-const adapter = getAdapter();
+// Получаем адаптер БД динамически (будет создан после загрузки настроек)
+let adapter = null;
+
+function getDbAdapter() {
+  if (!adapter) {
+    adapter = getAdapter();
+  }
+  return adapter;
+}
 
 // Кэш prepared statements (для совместимости, работает только с mysql2)
 const statementCache = new Map();
@@ -23,9 +30,10 @@ async function getPreparedStatement(sql) {
   }
 
   // Для mysql2 создаем через соединение из пула
-  if (adapter.getPool && adapter.getPool().getConnection) {
-    const connection = await adapter.getConnection();
-    try {
+  const dbAdapter = getDbAdapter();
+  if (dbAdapter.getPool && dbAdapter.getPool().getConnection) {
+    const connection = await dbAdapter.getConnection();
+  try {
       statementCache.set(sql, {
         sql,
         connection: null, // Будем использовать adapter.execute
@@ -56,7 +64,7 @@ async function getPreparedStatement(sql) {
  * @returns {Promise} Результат запроса [rows, fields]
  */
 async function execute(sql, params = []) {
-  return await adapter.execute(sql, params);
+  return await getDbAdapter().execute(sql, params);
 }
 
 /**
@@ -65,7 +73,7 @@ async function execute(sql, params = []) {
  * @returns {Promise} Результат запроса [rows, fields]
  */
 async function query(sql) {
-  return await adapter.query(sql);
+  return await getDbAdapter().query(sql);
 }
 
 /**
@@ -73,7 +81,7 @@ async function query(sql) {
  * @returns {Promise} Connection/Transaction для транзакции
  */
 async function beginTransaction() {
-  return await adapter.beginTransaction();
+  return await getDbAdapter().beginTransaction();
 }
 
 /**
@@ -84,7 +92,7 @@ async function beginTransaction() {
  * @returns {Promise} Результат запроса [rows, fields]
  */
 async function executeInTransaction(transaction, sql, params = []) {
-  return await adapter.executeInTransaction(transaction, sql, params);
+  return await getDbAdapter().executeInTransaction(transaction, sql, params);
 }
 
 /**
@@ -92,7 +100,7 @@ async function executeInTransaction(transaction, sql, params = []) {
  * @param {Object} transaction - Объект транзакции из beginTransaction
  */
 async function commit(transaction) {
-  return await adapter.commit(transaction);
+  return await getDbAdapter().commit(transaction);
 }
 
 /**
@@ -100,14 +108,14 @@ async function commit(transaction) {
  * @param {Object} transaction - Объект транзакции из beginTransaction
  */
 async function rollback(transaction) {
-  return await adapter.rollback(transaction);
+  return await getDbAdapter().rollback(transaction);
 }
 
 /**
  * Получить статистику пула соединений
  */
 function getPoolStats() {
-  const stats = adapter.getPoolStats();
+  const stats = getDbAdapter().getPoolStats();
   stats.cachedStatements = statementCache.size;
   return stats;
 }
@@ -125,7 +133,7 @@ function clearStatementCache() {
  * ВАЖНО: Для некоторых адаптеров может потребоваться release() после использования!
  */
 async function getConnection() {
-  return await adapter.getConnection();
+  return await getDbAdapter().getConnection();
 }
 
 /**
@@ -133,23 +141,43 @@ async function getConnection() {
  */
 function getPool() {
   try {
-    return adapter.getPool();
+    return getDbAdapter().getPool();
   } catch (error) {
     // Если адаптер не поддерживает getPool(), возвращаем сам адаптер
-    return adapter;
+    return getDbAdapter();
   }
 }
 
-// Для обратной совместимости экспортируем pool
-let poolExport;
-try {
-  poolExport = adapter.getPool();
-} catch (error) {
-  poolExport = adapter;
+// Функция для инициализации адаптера после загрузки настроек
+function initAdapter(config) {
+  if (adapter) {
+    resetAdapter();
+}
+  adapter = getAdapter(config);
+  
+  // Обновляем poolExport
+  try {
+    poolExport = adapter.getPool();
+  } catch (error) {
+    poolExport = adapter;
+  }
 }
 
+// Для обратной совместимости экспортируем pool (будет создан при инициализации)
+let poolExport = null;
+
 module.exports = {
-  pool: poolExport, // Для обратной совместимости
+  get pool() {
+    // Lazy initialization - создаем pool при первом обращении
+    if (!poolExport && adapter) {
+      try {
+        poolExport = adapter.getPool();
+      } catch (error) {
+        poolExport = adapter;
+      }
+    }
+    return poolExport;
+  },
   execute,
   query,
   beginTransaction,
@@ -160,6 +188,10 @@ module.exports = {
   getPoolStats,
   clearStatementCache,
   getPool,
-  // Экспортируем адаптер для расширенных возможностей
-  adapter
+  initAdapter, // Функция для инициализации адаптера после загрузки настроек
+  // Экспортируем адаптер для расширенных возможностей (lazy)
+  get adapter() {
+    return getDbAdapter();
+  }
 };
+

@@ -2,6 +2,8 @@
  * Вспомогательные функции для рейтингов (копия логики из app.js)
  */
 
+const { calculateCallbackStats } = require('./stats-calculator');
+
 /**
  * Упрощенная версия calculateStats для рейтингов
  */
@@ -47,20 +49,46 @@ function calculateStatsSimple(calls, viewType = 'queue') {
     
     // Собираем waitTimes
     let waitTime = call.waitTime;
+    
+    // Если waitTime не задан, вычисляем из startTime и connectTime
     if (!waitTime && call.connectTime && call.startTime) {
       try {
-        const start = new Date(call.startTime);
-        const connect = new Date(call.connectTime);
-        if (!isNaN(start.getTime()) && !isNaN(connect.getTime()) && connect > start) {
-          waitTime = Math.round((connect - start) / 1000);
+        // Парсим строки времени напрямую (формат: "YYYY-MM-DD HH:MM:SS")
+        const parseTime = (timeStr) => {
+          if (!timeStr || typeof timeStr !== 'string') return null;
+          const match = timeStr.match(/(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2}):(\d{2})/);
+          if (!match) return null;
+          const [, year, month, day, hour, minute, second] = match.map(Number);
+          return new Date(year, month - 1, day, hour, minute, second).getTime();
+        };
+        
+        const startTime = parseTime(call.startTime);
+        const connectTime = parseTime(call.connectTime);
+        
+        if (startTime && connectTime && connectTime > startTime) {
+          const diffSeconds = Math.round((connectTime - startTime) / 1000);
+          // Проверяем разумность значения (не больше 2 часов = 7200 секунд)
+          if (diffSeconds >= 0 && diffSeconds <= 7200) {
+            waitTime = diffSeconds;
+          }
         }
       } catch (e) {
         // Игнорируем ошибки парсинга дат
       }
     }
     
-    // Проверяем, что waitTime - разумное число (не больше часа)
-    if (waitTime !== null && waitTime !== undefined && !isNaN(waitTime) && waitTime >= 0 && waitTime < 3600) {
+    // Нормализуем waitTime: убеждаемся, что это число и оно разумное
+    if (waitTime !== null && waitTime !== undefined) {
+      // Преобразуем в число
+      waitTime = typeof waitTime === 'string' ? parseInt(waitTime, 10) : Number(waitTime);
+      // Проверяем, что это валидное число и не больше 2 часов
+      if (isNaN(waitTime) || waitTime < 0 || waitTime > 7200) {
+        waitTime = null;
+      }
+    }
+    
+    // Добавляем waitTime в массив только если оно валидно
+    if (waitTime !== null && waitTime !== undefined && !isNaN(waitTime) && waitTime >= 0 && waitTime <= 7200) {
       waitTimes.push(waitTime);
       
       if (!isAbandoned) {
@@ -79,23 +107,22 @@ function calculateStatsSimple(calls, viewType = 'queue') {
   const slaRate = totalCalls > 0 ? Math.round(slaCalls / totalCalls * 100) : 0;
   const avgQueueTime = avgWaitTime;
   
-  // Статистика перезвонов
-  let clientCallbacks = 0;
-  let agentCallbacks = 0;
-  calls.forEach(call => {
-    if (isAbandonedCall(call)) {
-      if (call.callbackStatus === 'Перезвонил сам') {
-        clientCallbacks++;
-      } else if (call.callbackStatus === 'Перезвонили мы') {
-        agentCallbacks++;
-      }
+  // Статистика перезвонов - используем общую функцию расчета
+  // Формула: noCallbacks = abandonedCalls - clientCallbacks - agentCallbacks
+  const callbackStats = calculateCallbackStats(calls, isAbandonedCall);
+  const clientCallbacks = callbackStats.clientCallbacks;
+  const agentCallbacks = callbackStats.agentCallbacks;
+  const noCallbacks = callbackStats.noCallbacks;
+  // ASA (Average Speed of Answer) - среднее время ответа только для принятых звонков
+  let asa = 0;
+  if (answeredWaitTimes.length > 0) {
+    const sum = answeredWaitTimes.reduce((a, b) => a + b, 0);
+    asa = Math.round(sum / answeredWaitTimes.length);
+    // Дополнительная проверка на разумность значения (не больше 2 часов)
+    if (asa > 7200 || asa < 0 || isNaN(asa)) {
+      asa = 0;
     }
-  });
-  
-  const noCallbacks = Math.max(0, abandonedCalls - clientCallbacks - agentCallbacks);
-  const asa = answeredWaitTimes.length > 0
-    ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
-    : avgWaitTime;
+  }
   
   const abandonRate = totalCalls > 0 
     ? Math.round((abandonedCalls / totalCalls) * 100 * 10) / 10

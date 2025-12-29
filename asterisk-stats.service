@@ -1,0 +1,21 @@
+[Unit]
+Description=Asterisk Stats Analytics Application
+After=network.target
+# БД может быть на удаленном сервере или в Docker, поэтому зависимости от mariadb.service нет
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/asterisk-stats
+Environment="NODE_ENV=production"
+EnvironmentFile=-/opt/asterisk-stats/.env
+ExecStart=/root/.nvm/versions/node/v16.20.2/bin/node /opt/asterisk-stats/app.js
+Restart=on-failure
+RestartSec=10
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

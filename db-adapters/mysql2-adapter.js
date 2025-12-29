@@ -22,7 +22,7 @@ class Mysql2Adapter extends BaseAdapter {
       acquireTimeout: 60000,
       timeout: 60000,
       multipleStatements: false,
-      dateStrings: false,
+      dateStrings: true, // ВАЖНО: возвращать даты как строки (данные в БД уже в локальном времени)
       supportBigNumbers: true,
       bigNumberStrings: false,
       typeCast: true,

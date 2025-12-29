@@ -97,22 +97,21 @@ class ModernChartManager {
       try {
         if (!call.startTime) return;
 
-        const date = new Date(call.startTime);
-        if (isNaN(date.getTime())) return;
+        // Извлекаем дату напрямую из строки (данные уже в локальном времени)
+        const str = call.startTime.toString();
+        const match = str.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (!match) return;
 
         // Используем полную дату для правильной сортировки
-        const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
-        const displayDate = date.toLocaleDateString('ru-RU', {
-          day: '2-digit',
-          month: '2-digit'
-        });
+        const dateKey = `${match[1]}-${match[2]}-${match[3]}`; // YYYY-MM-DD
+        const displayDate = `${match[3]}.${match[2]}`; // DD.MM
 
         if (!callsByDay[dateKey]) {
           callsByDay[dateKey] = { 
             answered: 0, 
             abandoned: 0,
             displayDate: displayDate,
-            fullDate: date
+            fullDate: call.startTime
           };
         }
 

@@ -5,10 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
   <link rel="stylesheet" href="/css/style.css?v=<%= Date.now() %>">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="/js/status-monitor.js?v=<%= Date.now() %>"></script>
 </head>
 <body>
   <div class="app-container">
-  <header class="header">
+    <header class="header">
       <div class="header-content">
         <div class="logo-section">
           <div class="logo-icon">🏆</div>
@@ -18,39 +21,39 @@
           </div>
         </div>
         <div class="header-status-group">
-          <a href="/" class="view-selector-btn" style="text-decoration: none; display: inline-flex; margin-right: 10px;">
-            ← Назад к отчетам
+          <a href="/" class="btn btn-secondary">
+            <span>←</span> Назад к отчетам
           </a>
+          <div class="performance-indicator" id="system-status">
+            <span id="status-indicator">●</span>
+            <span id="status-text">Проверка...</span>
+          </div>
+          <div class="tech-metric" id="current-time"><%= new Date().toLocaleTimeString('ru-RU') %></div>
         </div>
       </div>
-    </header>
-
-    <main class="main-content">
-      <!-- Форма фильтров -->
-      <section class="stats-header-section">
+      
+      <div class="header-form-container">
         <form method="POST" action="/rankings" id="rankings-form">
-        <div class="header-form-grid">
-          <div class="form-field">
-            <label for="start_date" class="form-label">Начало периода</label>
-            <input type="date" id="start_date" name="start_date" value="<%= startDate %>" required>
+          <div class="form-row" style="grid-template-columns: repeat(5, 1fr);">
+            <div class="form-group" style="grid-column: span 2;">
+              <label for="date_range">Период</label>
+              <input type="text" id="date_range" placeholder="Выберите период" style="cursor: pointer;" readonly>
+              <input type="hidden" id="start_date" name="start_date" value="<%= startDate %>">
+              <input type="hidden" id="end_date" name="end_date" value="<%= endDate %>">
             </div>
-          <div class="form-field">
-            <label for="end_date" class="form-label">Конец периода</label>
-            <input type="date" id="end_date" name="end_date" value="<%= endDate %>" required>
-            </div>
-            <div class="form-field">
-              <label for="sortBy" class="form-label">Критерий сортировки</label>
+            <div class="form-group">
+              <label for="sortBy">Критерий сортировки</label>
               <select id="sortBy" name="sortBy">
                 <option value="composite" <%= sortBy === 'composite' ? 'selected' : '' %>>Комплексный рейтинг</option>
                 <option value="answerRate" <%= sortBy === 'answerRate' ? 'selected' : '' %>>По проценту ответа</option>
                 <option value="sla" <%= sortBy === 'sla' ? 'selected' : '' %>>По SLA (20 сек)</option>
                 <option value="volume" <%= sortBy === 'volume' ? 'selected' : '' %>>По объему звонков</option>
-                <option value="abandonRate" <%= sortBy === 'abandonRate' ? 'selected' : '' %>>По проценту пропущенных</option>
-                <option value="asa" <%= sortBy === 'asa' ? 'selected' : '' %>>По среднему времени ответа</option>
+                <option value="abandonRate" <%= sortBy === 'abandonRate' ? 'selected' : '' %>>По необработанных</option>
+                <option value="asa" <%= sortBy === 'asa' ? 'selected' : '' %>>По времени ответа</option>
               </select>
             </div>
-            <div class="form-field">
-              <label for="departmentFilter" class="form-label">Фильтр по отделу</label>
+            <div class="form-group">
+              <label for="departmentFilter">Фильтр по отделу</label>
               <select id="departmentFilter" name="departmentFilter">
                 <option value="">Все отделы</option>
                 <option value="OP" <%= (typeof departmentFilter !== 'undefined' && departmentFilter === 'OP') ? 'selected' : '' %>>ОП</option>
@@ -58,35 +61,123 @@
                 <option value="Kommun" <%= (typeof departmentFilter !== 'undefined' && departmentFilter === 'Kommun') ? 'selected' : '' %>>Коммун центр</option>
               </select>
             </div>
-            <div class="form-field">
-              <button type="submit" class="btn-primary">Показать рейтинг</button>
+            <div class="form-group">
+              <label style="visibility: hidden;">Действия</label>
+              <div style="display: flex; gap: var(--space-2);">
+                <button type="button" class="btn btn-primary" id="show-rankings-btn" style="flex: 1;">
+                  <span>▶</span> Показать
+                </button>
+                <button type="button" class="btn btn-secondary" id="export-rankings-btn" title="Экспорт данных">
+                  <span>📥</span>
+                </button>
+              </div>
             </div>
           </div>
         </form>
-      </section>
+      </div>
+    </header>
 
-      <!-- Результаты рейтинга -->
+    <main>
+      <!-- Loading state -->
+      <div id="loading-message" class="loading-state" style="display: block;">
+        <div class="spinner"></div>
+        <p class="loading-text">Загрузка рейтинга...</p>
+      </div>
+
+      <!-- Error state -->
+      <div id="error-message" class="card" style="display: none; border-color: var(--accent-error);">
+        <div class="empty-state">
+          <div class="empty-state-icon">❌</div>
+          <h3 class="empty-state-title">Ошибка</h3>
+          <p class="empty-state-description" id="error-text"></p>
+        </div>
+      </div>
+
+      <!-- Rankings results -->
       <section id="rankings-results" style="display: none;">
-          <div class="stats-dashboard">
-          <h2 id="rankings-title"></h2>
-          <div id="rankings-table-container"></div>
+        <div class="table-container">
+          <div class="table-header">
+            <h2 class="table-title" id="rankings-title">
+              <span>📊</span> Рейтинг очередей
+            </h2>
+            <div class="table-actions export-actions">
+              <button class="btn btn-secondary export-btn excel" id="export-excel-inline" title="Экспорт в Excel">
+                📥 Excel
+              </button>
+            </div>
           </div>
-        </section>
-
-      <!-- Сообщение о загрузке -->
-      <section id="loading-message" style="text-align: center; padding: 40px; display: block;">
-        <div style="font-size: 18px; color: #666;">⏳ Загрузка рейтинга...</div>
-            </section>
-
-      <!-- Сообщение об ошибке -->
-      <section id="error-message" style="text-align: center; padding: 40px; display: none;">
-        <div style="font-size: 18px; color: #d32f2f;">❌ <span id="error-text"></span></div>
-            </section>
-  </main>
-    </div>
+          <div class="table-scroll">
+            <table class="rankings-table" id="rankings-table">
+              <thead>
+                <tr>
+                  <th class="cell-center" style="width: 70px;">Ранг</th>
+                  <th>Очередь</th>
+                  <th>Отдел</th>
+                  <th class="cell-center">Звонков <span class="tooltip-trigger" data-tooltip="Общее количество звонков">ℹ️</span></th>
+                  <th class="cell-center">Ответ <span class="tooltip-trigger" data-tooltip="Процент отвеченных звонков">ℹ️</span></th>
+                  <th class="cell-center">SLA <span class="tooltip-trigger" data-tooltip="Звонки, принятые в первые 20 секунд">ℹ️</span></th>
+                  <th class="cell-center">Не обработано <span class="tooltip-trigger" data-tooltip="Пропущенные без перезвона">ℹ️</span></th>
+                  <th class="cell-center">ASA <span class="tooltip-trigger" data-tooltip="Среднее время ожидания ответа">ℹ️</span></th>
+                  <th class="cell-center">Рейтинг <span class="tooltip-trigger" data-tooltip="Комплексная оценка 0-100">ℹ️</span></th>
+                </tr>
+              </thead>
+              <tbody id="rankings-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <script>
-    // Обработка формы
+    // Show Rankings button
+    document.getElementById('show-rankings-btn').addEventListener('click', () => {
+      document.getElementById('rankings-form').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+    });
+    
+    // Инициализация Flatpickr для выбора диапазона дат
+    const dateRangeInput = document.getElementById('date_range');
+    const startDateInput = document.getElementById('start_date');
+    const endDateInput = document.getElementById('end_date');
+    
+    let flatpickrInstance = null;
+    if (dateRangeInput) {
+      const startDate = startDateInput ? startDateInput.value : '';
+      const endDate = endDateInput ? endDateInput.value : '';
+      
+      flatpickrInstance = flatpickr(dateRangeInput, {
+        mode: "range",
+        dateFormat: "d.m.Y",
+        locale: {
+          firstDayOfWeek: 1,
+          weekdays: { shorthand: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"], longhand: ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"] },
+          months: { shorthand: ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"], longhand: ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"] }
+        },
+        defaultDate: startDate && endDate ? [startDate, endDate] : null,
+        onChange: function(selectedDates, dateStr, instance) {
+          if (selectedDates.length === 2) {
+            const start = selectedDates[0];
+            const end = selectedDates[1];
+            const startFormatted = start.getFullYear() + '-' + 
+              String(start.getMonth() + 1).padStart(2, '0') + '-' + 
+              String(start.getDate()).padStart(2, '0');
+            const endFormatted = end.getFullYear() + '-' + 
+              String(end.getMonth() + 1).padStart(2, '0') + '-' + 
+              String(end.getDate()).padStart(2, '0');
+            
+            if (startDateInput) startDateInput.value = startFormatted;
+            if (endDateInput) endDateInput.value = endFormatted;
+          } else if (selectedDates.length === 0) {
+            if (startDateInput) startDateInput.value = '';
+            if (endDateInput) endDateInput.value = '';
+          }
+        }
+      });
+    }
+    
+    // Form submit handler
     document.getElementById('rankings-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       
@@ -98,37 +189,24 @@
         departmentFilter: formData.get('departmentFilter') || null
       };
       
-      console.log('Отправляем данные:', data);
-      
-      // Показываем загрузку
-      document.getElementById('loading-message').style.display = 'block';
+      // Show loading
+      document.getElementById('loading-message').style.display = 'flex';
       document.getElementById('rankings-results').style.display = 'none';
       document.getElementById('error-message').style.display = 'none';
       
       try {
         const response = await fetch('/rankings', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
         });
         
         const result = await response.json();
         
-        console.log('Результат API:', result);
-        
-        if (result.success) {
-          if (result.rankings && result.rankings.length > 0) {
-            displayRankings(result.rankings, result.sortBy, result.period, result);
-          } else {
-            console.warn('Пустой массив рейтингов:', result);
-            document.getElementById('error-text').textContent = 'Нет данных за выбранный период. Попробуйте выбрать другой период.';
-            document.getElementById('error-message').style.display = 'block';
-            document.getElementById('loading-message').style.display = 'none';
-          }
+        if (result.success && result.rankings?.length > 0) {
+          displayRankings(result.rankings, result.sortBy, result.period);
         } else {
-          throw new Error(result.error || 'Ошибка при загрузке рейтинга');
+          throw new Error(result.error || 'Нет данных за выбранный период');
         }
       } catch (error) {
         document.getElementById('error-text').textContent = error.message;
@@ -138,129 +216,235 @@
     });
 
     function displayRankings(rankings, sortBy, period) {
-      const container = document.getElementById('rankings-table-container');
-      const title = document.getElementById('rankings-title');
-      
       const sortLabels = {
         composite: 'Комплексный рейтинг',
         answerRate: 'Процент ответа',
         sla: 'SLA (20 сек)',
         volume: 'Объем звонков',
-        abandonRate: 'Процент пропущенных',
-        asa: 'Среднее время ответа'
+        abandonRate: 'Необработанные',
+        asa: 'Время ответа'
       };
       
-      title.textContent = `Рейтинг очередей по критерию: ${sortLabels[sortBy] || 'Комплексный рейтинг'} (${period.start} - ${period.end})`;
-      
-      let html = `
-        <table class="data-table" style="width: 100%; margin-top: 20px;">
-          <thead>
-            <tr>
-              <th style="width: 60px;">Ранг</th>
-              <th>Очередь</th>
-            <th>Отдел</th>
-              <th>Звонков</th>
-              <th>Ответ</th>
-              <th>SLA</th>
-              <th>Пропущено</th>
-              <th>ASA</th>
-              <th>Комплексный рейтинг</th>
-            </tr>
-          </thead>
-          <tbody>
+      document.getElementById('rankings-title').innerHTML = `
+        <span>📊</span> ${sortLabels[sortBy] || 'Комплексный рейтинг'}
+        <span style="font-weight: 400; font-size: var(--text-sm); color: var(--text-tertiary); margin-left: var(--space-2);">
+          ${period.start} — ${period.end}
+        </span>
       `;
+      
+      const tbody = document.getElementById('rankings-tbody');
+      tbody.innerHTML = '';
       
       rankings.forEach((queue, index) => {
         const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
-        const rankClass = index < 3 ? 'top-rank' : '';
+        const rankClass = index < 3 ? `rank-${index + 1}` : '';
         
-        html += `
-          <tr class="${rankClass}">
-            <td style="text-align: center; font-weight: bold;">
-              ${medal} ${queue.rank}
-            </td>
-            <td><strong>${queue.queueDisplayName || queue.queueName}</strong></td>
-            <td style="text-align: center;">${queue.department || 'Не указан'}</td>
-            <td style="text-align: center;">${queue.totalCalls}</td>
-            <td style="text-align: center;">
-              <span style="color: ${queue.answerRate >= 80 ? '#4caf50' : queue.answerRate >= 60 ? '#ff9800' : '#f44336'};">
-                ${queue.answerRate}%
-              </span>
-              <small style="display: block; color: #666;">${queue.answeredCalls} из ${queue.totalCalls}</small>
-            </td>
-            <td style="text-align: center;">
-              <span style="color: ${queue.slaRate >= 80 ? '#4caf50' : queue.slaRate >= 60 ? '#ff9800' : '#f44336'};">
-                ${queue.slaRate}%
-              </span>
-            </td>
-            <td style="text-align: center;">
-              <span style="color: ${queue.abandonRate <= 10 ? '#4caf50' : queue.abandonRate <= 20 ? '#ff9800' : '#f44336'};">
-                ${queue.abandonRate}%
-              </span>
-              <small style="display: block; color: #666;">${queue.abandonedCalls} звонков</small>
-            </td>
-            <td style="text-align: center;">${formatTime(queue.asa)}</td>
-            <td style="text-align: center;">
-              <strong style="font-size: 18px; color: ${queue.compositeScore >= 80 ? '#4caf50' : queue.compositeScore >= 60 ? '#ff9800' : '#f44336'};">
-                ${queue.compositeScore.toFixed(1)}
-              </strong>
-            </td>
-          </tr>
+        const row = document.createElement('tr');
+        row.className = 'stagger-item';
+        row.style.animationDelay = `${index * 0.03}s`;
+        
+        // Prepare tooltip data
+        const queueData = JSON.stringify({
+          totalCalls: queue.totalCalls,
+          answeredCalls: queue.answeredCalls,
+          abandonedCalls: queue.abandonedCalls,
+          answerRate: queue.answerRate,
+          slaRate: queue.slaRate,
+          slaCalls: queue.slaCalls || 0,
+          noCallbacks: queue.noCallbacks || 0,
+          noCallbacksRate: queue.noCallbacksRate || 0,
+          asa: queue.asa,
+          compositeScore: queue.compositeScore,
+          clientCallbacks: queue.clientCallbacks || 0,
+          agentCallbacks: queue.agentCallbacks || 0
+        }).replace(/"/g, '&quot;');
+        
+        row.innerHTML = `
+          <td class="rank-cell ${rankClass}">
+            ${medal ? `<span class="rank-medal">${medal}</span>` : queue.rank}
+          </td>
+          <td>
+            <div class="queue-name">${queue.queueDisplayName || queue.queueName}</div>
+          </td>
+          <td class="cell-center">
+            <span class="badge badge-neutral">${queue.department || 'Не указан'}</span>
+          </td>
+          <td class="cell-center cell-mono info-cell" data-cell-data="${queueData}" data-cell-type="totalCalls">
+            ${queue.totalCalls}
+          </td>
+          <td class="cell-center info-cell" data-cell-data="${queueData}" data-cell-type="answerRate">
+            <span class="${getStatusClass(queue.answerRate, [80, 60])}">${queue.answerRate}%</span>
+            <div style="font-size: var(--text-xs); color: var(--text-tertiary);">${queue.answeredCalls}/${queue.totalCalls}</div>
+          </td>
+          <td class="cell-center info-cell" data-cell-data="${queueData}" data-cell-type="sla">
+            <span class="${getStatusClass(queue.slaRate, [80, 60])}">${queue.slaRate}%</span>
+          </td>
+          <td class="cell-center info-cell" data-cell-data="${queueData}" data-cell-type="noCallbacksRate">
+            <span class="${getStatusClass(100 - (queue.noCallbacksRate || 0), [98, 95])}">${(queue.noCallbacksRate || 0).toFixed(1)}%</span>
+            <div style="font-size: var(--text-xs); color: var(--text-tertiary);">${queue.noCallbacks || 0} зв.</div>
+          </td>
+          <td class="cell-center cell-mono info-cell" data-cell-data="${queueData}" data-cell-type="asa">
+            ${formatTime(queue.asa)}
+          </td>
+          <td class="cell-center info-cell" data-cell-data="${queueData}" data-cell-type="compositeScore">
+            <span class="rating-value">${queue.compositeScore.toFixed(1)}</span>
+          </td>
         `;
+        
+        tbody.appendChild(row);
       });
       
-      html += `
-          </tbody>
-        </table>
-      `;
-      
-      container.innerHTML = html;
       document.getElementById('rankings-results').style.display = 'block';
       document.getElementById('loading-message').style.display = 'none';
+      
+      setupTooltips();
     }
-
+    
+    function getStatusClass(value, thresholds) {
+      if (value >= thresholds[0]) return 'text-success font-bold';
+      if (value >= thresholds[1]) return 'text-warning font-bold';
+      return 'text-error font-bold';
+    }
+    
     function formatTime(seconds) {
-      if (!seconds) return '0:00';
-      const min = Math.floor(seconds / 60);
-      const sec = seconds % 60;
-      return `${min}:${sec.toString().padStart(2, '0')}`;
-    }
-
-    // Автозагрузка при загрузке страницы
-    window.addEventListener('DOMContentLoaded', () => {
-      // Автоматически отправляем запрос с текущими значениями формы
-      const form = document.getElementById('rankings-form');
-      if (form) {
-        // Небольшая задержка для полной загрузки страницы
-        setTimeout(() => {
-          const formEvent = new Event('submit', { bubbles: true, cancelable: true });
-          form.dispatchEvent(formEvent);
-        }, 200);
+      if (!seconds || isNaN(seconds)) return '0:00';
+      
+      // Преобразуем в число, если это строка
+      const sec = typeof seconds === 'string' ? parseInt(seconds, 10) : Number(seconds);
+      
+      // Проверяем на разумность значения (не больше 2 часов = 7200 секунд)
+      if (isNaN(sec) || sec < 0 || sec > 7200) {
+        return '0:00';
       }
+      
+      const min = Math.floor(sec / 60);
+      const remainingSec = sec % 60;
+      return `${min}:${remainingSec.toString().padStart(2, '0')}`;
+    }
+    
+    // Tooltip system
+    let tooltipEl = null;
+    
+    function setupTooltips() {
+      document.querySelectorAll('.info-cell').forEach(cell => {
+        cell.addEventListener('mouseenter', showTooltip);
+        cell.addEventListener('mouseleave', hideTooltip);
+        cell.addEventListener('mousemove', moveTooltip);
+      });
+    }
+    
+    function showTooltip(e) {
+      const cell = e.target.closest('.info-cell');
+      if (!cell) return;
+      
+      const data = JSON.parse(cell.getAttribute('data-cell-data'));
+      const type = cell.getAttribute('data-cell-type');
+      
+      tooltipEl = document.createElement('div');
+      tooltipEl.className = 'chart-tooltip';
+      tooltipEl.innerHTML = getTooltipContent(data, type);
+      document.body.appendChild(tooltipEl);
+      moveTooltip(e);
+    }
+    
+    function hideTooltip() {
+      if (tooltipEl) {
+        tooltipEl.remove();
+        tooltipEl = null;
+      }
+    }
+    
+    function moveTooltip(e) {
+      if (!tooltipEl) return;
+      const x = Math.min(e.clientX + 15, window.innerWidth - tooltipEl.offsetWidth - 20);
+      const y = Math.min(e.clientY + 15, window.innerHeight - tooltipEl.offsetHeight - 20);
+      tooltipEl.style.left = x + 'px';
+      tooltipEl.style.top = y + 'px';
+    }
+    
+    function getTooltipContent(data, type) {
+      const templates = {
+        totalCalls: `
+          <div class="tooltip-header">📞 Всего звонков</div>
+          <div class="tooltip-row"><span class="tooltip-label">Количество:</span><span class="tooltip-value">${data.totalCalls}</span></div>
+        `,
+        answerRate: `
+          <div class="tooltip-header">✅ Процент ответа</div>
+          <div class="tooltip-row"><span class="tooltip-label">Формула:</span><span class="tooltip-value">(Ответ / Всего) × 100%</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Расчёт:</span><span class="tooltip-value">${data.answeredCalls} / ${data.totalCalls} = ${data.answerRate}%</span></div>
+        `,
+        sla: `
+          <div class="tooltip-header">⚡ SLA (20 секунд)</div>
+          <div class="tooltip-row"><span class="tooltip-label">Звонки SLA:</span><span class="tooltip-value">${data.slaCalls}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Процент:</span><span class="tooltip-value">${data.slaRate}%</span></div>
+        `,
+        noCallbacksRate: `
+          <div class="tooltip-header">⏸️ Не обработано</div>
+          <div class="tooltip-row"><span class="tooltip-label">Без перезвона:</span><span class="tooltip-value">${data.noCallbacks}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Всего пропущено:</span><span class="tooltip-value">${data.abandonedCalls}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Процент:</span><span class="tooltip-value">${(data.noCallbacksRate || 0).toFixed(1)}%</span></div>
+        `,
+        asa: `
+          <div class="tooltip-header">⏱️ ASA (Average Speed of Answer)</div>
+          <div class="tooltip-row"><span class="tooltip-label">Среднее время:</span><span class="tooltip-value">${formatTime(data.asa)}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">В секундах:</span><span class="tooltip-value">${data.asa} сек</span></div>
+        `,
+        compositeScore: `
+          <div class="tooltip-header">📊 Комплексный рейтинг</div>
+          <div class="tooltip-row"><span class="tooltip-label">Ответ (30%):</span><span class="tooltip-value success">+${(data.answerRate * 0.30).toFixed(1)}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">SLA (25%):</span><span class="tooltip-value success">+${(data.slaRate * 0.25).toFixed(1)}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Объём (15%):</span><span class="tooltip-value success">+${(Math.min(data.totalCalls / 1000, 1) * 100 * 0.15).toFixed(1)}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Итого:</span><span class="tooltip-value" style="font-size: 1.1em; font-weight: 700;">${data.compositeScore.toFixed(1)}</span></div>
+        `
+      };
+      return templates[type] || '';
+    }
+    
+    // Export buttons
+    document.getElementById('export-rankings-btn').addEventListener('click', exportToExcel);
+    document.getElementById('export-excel-inline')?.addEventListener('click', exportToExcel);
+    
+    async function exportToExcel() {
+      const form = document.getElementById('rankings-form');
+      const formData = new FormData(form);
+      const data = {
+        start_date: formData.get('start_date'),
+        end_date: formData.get('end_date'),
+        sortBy: formData.get('sortBy') || 'composite',
+        departmentFilter: formData.get('departmentFilter') || null
+      };
+      
+      try {
+        const response = await fetch('/export-rankings-excel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        
+        if (response.ok) {
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Рейтинг_${data.start_date}_${data.end_date}.xlsx`;
+          a.click();
+          window.URL.revokeObjectURL(url);
+        } else {
+          alert('Ошибка экспорта');
+        }
+      } catch (error) {
+        alert('Ошибка: ' + error.message);
+      }
+    }
+    
+    // Auto-load on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => {
+        document.getElementById('rankings-form').dispatchEvent(
+          new Event('submit', { bubbles: true, cancelable: true })
+        );
+      }, 200);
     });
   </script>
-
-  <style>
-    .top-rank {
-      background-color: #fff9c4;
-    }
-    .top-rank:hover {
-      background-color: #fff59d;
-    }
-    .data-table th {
-      background-color: #f5f5f5;
-      padding: 12px;
-      text-align: left;
-      font-weight: 600;
-      border-bottom: 2px solid #ddd;
-    }
-    .data-table td {
-      padding: 12px;
-      border-bottom: 1px solid #eee;
-    }
-    .data-table tr:hover {
-      background-color: #f9f9f9;
-    }
-  </style>
 </body>
 </html>

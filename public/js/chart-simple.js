@@ -39,13 +39,12 @@ class ChartManager {
       try {
         if (!call.startTime) return;
 
-        const date = new Date(call.startTime);
-        if (isNaN(date.getTime())) return;
+        // Извлекаем дату напрямую из строки (данные уже в локальном времени)
+        const str = call.startTime.toString();
+        const match = str.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (!match) return;
 
-        const dateKey = date.toLocaleDateString('ru-RU', {
-          day: '2-digit',
-          month: '2-digit'
-        });
+        const dateKey = `${match[3]}.${match[2]}`; // DD.MM
 
         if (!callsByDay[dateKey]) {
           callsByDay[dateKey] = { answered: 0, abandoned: 0 };
@@ -347,9 +346,11 @@ class CallsTableManager {
   getSortValue(call, field) {
     switch (field) {
       case 'date':
-        return new Date(call.startTime).getTime();
+        // Строки формата YYYY-MM-DD HH:MM:SS сортируются корректно
+        return (call.startTime || '').toString();
       case 'time':
-        return new Date(call.startTime).getTime();
+        // Строки формата YYYY-MM-DD HH:MM:SS сортируются корректно
+        return (call.startTime || '').toString();
       case 'client':
         return call.clientNumber || '';
       case 'wait':
@@ -415,18 +416,14 @@ class CallsTableManager {
 
   createTableRow(call) {
     const formatDateTime = (dateString) => {
-      const date = new Date(dateString);
-      const datePart = date.toLocaleDateString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      });
-      const timePart = date.toLocaleTimeString('ru-RU', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        second: '2-digit'
-      });
-      return `${datePart} ${timePart}`;
+      if (!dateString) return '-';
+      // Извлекаем дату и время напрямую из строки (данные уже в локальном времени)
+      const str = dateString.toString();
+      const match = str.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):?(\d{2})?/);
+      if (match) {
+        return `${match[3]}.${match[2]}.${match[1]} ${match[4]}:${match[5]}:${match[6] || '00'}`;
+      }
+      return str;
     };
 
     const formatDuration = (seconds) => {

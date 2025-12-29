@@ -15,9 +15,32 @@ const helpers = {
     if (!call.startTime) return '-';
     const endTime = call.connectTime || call.endTime;
     if (!endTime) return '-';
-    const start = new Date(call.startTime);
-    const end = new Date(endTime);
-    return Math.round((end - start) / 1000);
+    
+    try {
+      // Парсим строки времени напрямую (формат: "YYYY-MM-DD HH:MM:SS")
+      const parseTime = (timeStr) => {
+        if (!timeStr || typeof timeStr !== 'string') return null;
+        const match = timeStr.match(/(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2}):(\d{2})/);
+        if (!match) return null;
+        const [, year, month, day, hour, minute, second] = match.map(Number);
+        return new Date(year, month - 1, day, hour, minute, second).getTime();
+      };
+      
+      const startTime = parseTime(call.startTime);
+      const endTimeParsed = parseTime(endTime);
+      
+      if (startTime && endTimeParsed && endTimeParsed > startTime) {
+        const diffSeconds = Math.round((endTimeParsed - startTime) / 1000);
+        // Проверяем разумность значения (не больше 2 часов = 7200 секунд)
+        if (diffSeconds >= 0 && diffSeconds <= 7200) {
+          return diffSeconds;
+        }
+      }
+    } catch (e) {
+      // Игнорируем ошибки парсинга дат
+    }
+    
+    return '-';
   },
 
   formatDuration: (sec) => {

@@ -102,16 +102,23 @@ function getAvailableAdapters() {
  * Сбросить кэшированный экземпляр адаптера
  */
 function resetAdapter() {
-  if (adapterInstance && typeof adapterInstance.close === 'function') {
-    adapterInstance.close().catch(err => {
-      console.error('Ошибка при закрытии адаптера:', err);
-    });
+  if (adapterInstance) {
+    try {
+      // Пытаемся закрыть адаптер, но игнорируем ошибки (может быть уже закрыт)
+      if (typeof adapterInstance.close === 'function') {
+        adapterInstance.close().catch(() => {
+          // Игнорируем ошибки при закрытии (адаптер может быть уже закрыт)
+        });
+      }
+    } catch (err) {
+      // Игнорируем ошибки
+    }
   }
   adapterInstance = null;
 }
 
-// Автоматическая инициализация при загрузке модуля
-const adapter = getAdapter();
+// НЕ создаем адаптер автоматически - это делается после загрузки настроек
+// const adapter = getAdapter(); // Убрано - создаем адаптер после загрузки настроек
 
 module.exports = {
   getAdapter,

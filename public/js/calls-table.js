@@ -64,16 +64,13 @@ class SimpleCallsTable {
   formatDateTime(dateString) {
     if (!dateString) return '-';
     try {
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) return dateString;
-      return date.toLocaleString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      });
+      // Извлекаем дату и время напрямую из строки (данные уже в локальном времени)
+      const str = dateString.toString();
+      const match = str.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):?(\d{2})?/);
+      if (match) {
+        return `${match[3]}.${match[2]}.${match[1]}, ${match[4]}:${match[5]}:${match[6] || '00'}`;
+      }
+      return dateString;
     } catch (e) {
       return dateString;
     }

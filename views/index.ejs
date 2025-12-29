@@ -3,296 +3,217 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Asterisk Queue Analytics - Technical Monitoring Dashboard for Asterisk PBX systems">
-  <meta name="keywords" content="Asterisk, PBX, queue analytics, technical monitoring, call center metrics">
-  <meta name="author" content="Asterisk Analytics Team">
-  <meta name="robots" content="index, follow">
-  <meta property="og:title" content="Asterisk Queue Analytics">
-  <meta property="og:description" content="Technical monitoring dashboard for Asterisk PBX queue performance analysis">
-  <meta property="og:type" content="website">
-  <meta property="og:image" content="/images/asterisk-analytics.png">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Asterisk Queue Analytics">
-  <meta name="twitter:description" content="Technical monitoring dashboard for Asterisk PBX systems">
-  <link rel="canonical" href="<%= typeof url !== 'undefined' ? url : 'http://localhost:3000' %>">
-  <title>Asterisk Queue Analytics - Technical Dashboard</title>
-
-  <!-- Material Design 3 Tech Specialist Interface -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <meta name="description" content="Аналитика звонков - Панель мониторинга Asterisk PBX">
+  <title>Аналитика звонков</title>
   <link rel="stylesheet" href="/css/style.css?v=<%= Date.now() %>">
-
-  <!-- Structured Data -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Asterisk Queue Analytics",
-    "description": "Technical monitoring dashboard for Asterisk PBX queue performance analysis",
-    "url": "<%= typeof url !== 'undefined' ? url : 'http://localhost:3000' %>",
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Web Browser",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD"
-    },
-    "author": {
-      "@type": "Organization",
-      "name": "Asterisk Analytics Team"
-      }
-    }
-  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="/js/status-monitor.js?v=<%= Date.now() %>" defer></script>
+  <script src="/js/call-center-stats.js?v=<%= Date.now() %>" defer></script>
 </head>
 <body>
   <div class="app-container">
-  <header class="header">
+    <header class="header">
       <div class="header-content">
         <div class="logo-section">
           <div class="logo-icon">⚡</div>
           <div class="logo-text">
-            <h1>Asterisk Queue Analytics</h1>
-            <div class="logo-subtitle">
-              Technical Monitoring Dashboard
-    </div>
+            <h1>Аналитика звонков</h1>
+            <div class="logo-subtitle">Панель мониторинга</div>
           </div>
         </div>
         <div class="header-status-group">
           <div class="performance-indicator" id="system-status">
-            <span id="status-indicator">●</span> <span id="status-text">Проверка...</span>
+            <span id="status-indicator">●</span>
+            <span id="status-text">Проверка...</span>
           </div>
           <div class="tech-metric" id="current-time"><%= new Date().toLocaleTimeString('ru-RU') %></div>
         </div>
-    </div>
-    
-    <!-- Query Form Section - Above Navigation Tabs -->
-    <div class="header-form-container">
-      <form method="POST" action="/report" role="form" aria-labelledby="query-form-title">
-        <input type="hidden" name="view_type" value="<%= typeof viewType !== 'undefined' ? viewType : 'queue' %>" id="view_type">
-        
-        <!-- Quick Date Filters and Navigation -->
-        <div class="quick-filters" style="display: flex; gap: var(--md-spacing-md); align-items: center; flex-wrap: wrap; margin-bottom: var(--md-spacing-md);">
-          <!-- Quick Date Filters -->
-          <div class="view-selector-group" role="group" aria-label="Быстрый выбор периода">
-            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="today">Сегодня</button>
-            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="yesterday">Вчера</button>
-            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="week">Неделя</button>
-            <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="month">Месяц</button>
       </div>
+    
+      <div class="header-form-container">
+        <form method="POST" action="/report" id="main-form">
+          <input type="hidden" name="view_type" value="<%= typeof viewType !== 'undefined' ? viewType : 'queue' %>" id="view_type">
           
-          <!-- View Type Selector -->
-          <div class="view-selector-group" role="group" aria-label="Выбор типа представления">
-            <button type="button" class="view-selector-btn <%= typeof viewType === 'undefined' || viewType === 'queue' ? 'active' : '' %>" data-view="queue" aria-pressed="<%= typeof viewType === 'undefined' || viewType === 'queue' ? 'true' : 'false' %>">
-              <span class="view-selector-icon">📞</span>
-              <span class="view-selector-text">Вх очередь</span>
-            </button>
-            <button type="button" class="view-selector-btn <%= viewType === 'outbound_queue' ? 'active' : '' %>" data-view="outbound_queue" aria-pressed="<%= viewType === 'outbound_queue' ? 'true' : 'false' %>">
-              <span class="view-selector-icon">📞</span>
-              <span class="view-selector-text">Исх очереди</span>
-            </button>
-            <button type="button" class="view-selector-btn <%= viewType === 'inbound' ? 'active' : '' %>" data-view="inbound" aria-pressed="<%= viewType === 'inbound' ? 'true' : 'false' %>">
-              <span class="view-selector-icon">📥</span>
-              <span class="view-selector-text">Входящие</span>
-            </button>
-            <button type="button" class="view-selector-btn <%= viewType === 'outbound' ? 'active' : '' %>" data-view="outbound" aria-pressed="<%= viewType === 'outbound' ? 'true' : 'false' %>">
-              <span class="view-selector-icon">📤</span>
-              <span class="view-selector-text">Исходящие</span>
-            </button>
-            <a href="/rankings" class="view-selector-btn" style="text-decoration: none; display: inline-flex;">
-              <span class="view-selector-icon">🏆</span>
-              <span class="view-selector-text">Рейтинг</span>
-            </a>
-          </div>
-          
-          <!-- Action Buttons -->
-          <div class="view-selector-group" role="group" aria-label="Действия">
-            <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
-            <button type="button" class="view-selector-btn" id="open-email-modal-btn" title="Настройки email рассылки">
-              <span class="view-selector-icon">📧</span>
-              <span class="view-selector-text">Email</span>
-            </button>
-            <% } %>
-            <button type="button" class="view-selector-btn" id="export-btn" title="Экспорт данных">
-              <span class="view-selector-icon">📥</span>
-              <span class="view-selector-text">Экспорт</span>
-            </button>
-          </div>
-        </div>
-        
-        <div class="header-form-grid">
-          <div class="form-field">
-              <label for="queue_name" class="form-label">Очередь</label>
-            <select id="queue_name" name="queue_name" <%= (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') ? 'required' : '' %> <%= typeof viewType !== 'undefined' && (viewType === 'inbound' || viewType === 'outbound') ? 'disabled' : '' %>>
-              <% if (queues && queues.length > 0) { %>
-                <% queues.forEach(queue => { %>
-                  <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>><%= typeof helpers !== 'undefined' && helpers.formatQueueName ? helpers.formatQueueName(queue) : queue %></option>
-                <% }); %>
-              <% } else { %>
-                <option value="">Загрузка...</option>
+          <div class="quick-filters">
+            <!-- Quick Date Filters -->
+            <div class="view-selector-group">
+              <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="today">Сегодня</button>
+              <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="yesterday">Вчера</button>
+              <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="week">Неделя</button>
+              <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="month">Месяц</button>
+            </div>
+            
+            <!-- View Type Selector -->
+            <div class="view-selector-group">
+              <button type="button" class="view-selector-btn <%= typeof viewType === 'undefined' || viewType === 'queue' ? 'active' : '' %>" data-view="queue">
+                <span class="view-selector-icon">📞</span>
+                <span class="view-selector-text">Вх очередь</span>
+              </button>
+              <button type="button" class="view-selector-btn <%= viewType === 'outbound_queue' ? 'active' : '' %>" data-view="outbound_queue">
+                <span class="view-selector-icon">📞</span>
+                <span class="view-selector-text">Исх очереди</span>
+              </button>
+              <button type="button" class="view-selector-btn <%= viewType === 'inbound' ? 'active' : '' %>" data-view="inbound">
+                <span class="view-selector-icon">📥</span>
+                <span class="view-selector-text">Входящие</span>
+              </button>
+              <button type="button" class="view-selector-btn <%= viewType === 'outbound' ? 'active' : '' %>" data-view="outbound">
+                <span class="view-selector-icon">📤</span>
+                <span class="view-selector-text">Исходящие</span>
+              </button>
+              <a href="/rankings" class="view-selector-btn">
+                <span class="view-selector-icon">🏆</span>
+                <span class="view-selector-text">Рейтинг</span>
+              </a>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="view-selector-group">
+              <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
+              <button type="button" class="view-selector-btn" id="open-email-modal-btn" title="Email рассылка">
+                <span class="view-selector-icon">📧</span>
+              </button>
               <% } %>
+              <button type="button" class="view-selector-btn" id="open-settings-modal-btn" title="Настройки">
+                <span class="view-selector-icon">⚙️</span>
+              </button>
+              <button type="button" class="view-selector-btn" id="export-btn" title="Экспорт">
+                <span class="view-selector-icon">📥</span>
+              </button>
+            </div>
+          </div>
+          
+          <div class="form-row" style="grid-template-columns: 2fr 1.5fr auto;">
+            <div class="form-group">
+              <label for="queue_name">Очередь</label>
+              <select id="queue_name" name="queue_name" <%= (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') ? 'required' : '' %> <%= typeof viewType !== 'undefined' && (viewType === 'inbound' || viewType === 'outbound') ? 'disabled' : '' %>>
+                <% if (queues && queues.length > 0) { %>
+                  <% queues.forEach(queue => { %>
+                    <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>><%= typeof helpers !== 'undefined' && helpers.formatQueueName ? helpers.formatQueueName(queue) : queue %></option>
+                  <% }); %>
+                <% } else { %>
+                  <option value="">Загрузка...</option>
+                <% } %>
               </select>
             </div>
             
-          <div class="form-field">
-            <label for="start_date" class="form-label">Начало периода</label>
-            <input type="date" id="start_date" name="start_date" value="<%= startDate %>" required>
+            <div class="form-group">
+              <label for="date_range">Период</label>
+              <input type="text" id="date_range" placeholder="Выберите период" style="cursor: pointer;" readonly>
+              <input type="hidden" id="start_date" name="start_date" value="<%= startDate %>">
+              <input type="hidden" id="end_date" name="end_date" value="<%= endDate %>">
             </div>
             
-          <div class="form-field">
-            <label for="end_date" class="form-label">Конец периода</label>
-            <input type="date" id="end_date" name="end_date" value="<%= endDate %>" required>
-            </div>
-            
-          <div class="form-field form-field-actions">
-            <button type="submit" class="view-selector-btn">
-              <span class="view-selector-icon">▶</span>
-              <span class="view-selector-text">Выполнить анализ</span>
+            <div class="form-group" style="align-self: flex-end;">
+              <button type="submit" class="btn btn-primary" style="min-width: 140px;">
+                <span>▶</span> Анализ
               </button>
             </div>
           </div>
         </form>
-    </div>
-  </header>
+      </div>
+    </header>
 
-    <main class="main-content">
-
-        <% if (!results) { %>
-          <div class="alert alert-info">
-          <span>ℹ️</span>
-          Выберите параметры и запустите анализ для получения технических метрик
+    <main>
+      <% if (!results) { %>
+        <div class="empty-state">
+          <div class="empty-state-icon">📊</div>
+          <h3 class="empty-state-title">Выберите параметры анализа</h3>
+          <p class="empty-state-description">Укажите очередь и период для получения статистики звонков</p>
+        </div>
+      <% } else if (results.error) { %>
+        <div class="card" style="border-color: var(--accent-error);">
+          <div class="empty-state">
+            <div class="empty-state-icon">⚠️</div>
+            <h3 class="empty-state-title">Ошибка</h3>
+            <p class="empty-state-description"><%= results.error %></p>
           </div>
-        <% } else if (results.error) { %>
-        <div class="alert alert-error">
-          <span>⚠️</span>
-            <%= results.error %>
+        </div>
+      <% } else { %>
+        <!-- KPI Cards -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon">📞</div>
+            <div class="kpi-label">Всего звонков</div>
+            <div class="kpi-value"><%= results.stats.totalCalls %></div>
           </div>
-        <% } else { %>
-        <!-- Call Center Statistics Header -->
-        <section class="stats-header-section">
-          <div class="section-header">
-              </div>
-
-          <!-- Dashboard стиль статистики -->
-          <div class="stats-dashboard">
-            <!-- Ключевые метрики (крупные) -->
-            <div class="stats-key-metrics">
-              <div class="stat-key stat-key-primary">
-                <div class="stat-key-icon">📞</div>
-                <div class="stat-key-value"><%= results.stats.totalCalls %></div>
-                <div class="stat-key-label">Всего звонков</div>
-              </div>
-              <div class="stat-key stat-key-success">
-                <div class="stat-key-icon">✅</div>
-                <div class="stat-key-value"><%= results.stats.answerRate %>%</div>
-                <div class="stat-key-label">Процент ответа</div>
-                <div class="stat-key-desc"><%= results.stats.answeredCalls %> из <%= results.stats.totalCalls %></div>
-              </div>
-              <div class="stat-key stat-key-danger">
-                <div class="stat-key-icon">❌</div>
-                <div class="stat-key-value"><%= results.stats.abandonedCalls %></div>
-                <div class="stat-key-label">Пропущенные</div>
-                <div class="stat-key-desc"><%= results.stats.totalCalls > 0 ? Math.round(results.stats.abandonedCalls / results.stats.totalCalls * 100) : 0 %>% от общего</div>
-              </div>
-              <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
-              <div class="stat-key stat-key-warning">
-                <div class="stat-key-icon">⏱️</div>
-                <div class="stat-key-value"><%= results.stats.slaRate %>%</div>
-                <div class="stat-key-label">SLA (20 сек)</div>
-              </div>
-              <% } %>
-            </div>
-
-            <!-- Дополнительные метрики (компактные) -->
-            <div class="stats-secondary">
-              <div class="stats-secondary-group">
-                <h4 class="stats-secondary-title">Перезвоны</h4>
-                <div class="stats-secondary-items">
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">↩️</span>
-                    <span class="stat-secondary-label">Перезвонил сам:</span>
-                    <span class="stat-secondary-value"><%= results.stats.clientCallbacks || 0 %></span>
-              </div>
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">📞</span>
-                    <span class="stat-secondary-label">Перезвонили мы:</span>
-                    <span class="stat-secondary-value"><%= results.stats.agentCallbacks || 0 %></span>
-              </div>
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">⏸️</span>
-                    <span class="stat-secondary-label">Не обработан:</span>
-                    <% 
-                      const clientCb = results.stats.clientCallbacks || 0;
-                      const agentCb = results.stats.agentCallbacks || 0;
-                      const notProcessed = results.stats.abandonedCalls - clientCb - agentCb;
-                    %>
-                    <span class="stat-secondary-value"><%= notProcessed >= 0 ? notProcessed : 0 %></span>
-                  </div>
-              </div>
-            </div>
-
-              <div class="stats-secondary-group">
-                <h4 class="stats-secondary-title">Время</h4>
-                <div class="stats-secondary-items">
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">⏳</span>
-                    <span class="stat-secondary-label">Среднее ожидание:</span>
-                    <span class="stat-secondary-value">
-                      <% 
-                        const avgWaitTime = results.stats.avgWaitTimeAnswered || results.stats.avgWaitTime || 0;
-                        const avgWaitMin = Math.floor(avgWaitTime / 60);
-                        const avgWaitSec = Math.round(avgWaitTime % 60);
-                        const avgWaitSecStr = avgWaitSec < 10 ? '0' + avgWaitSec : avgWaitSec;
-                        const displayValue = isNaN(avgWaitMin) || isNaN(avgWaitSec) ? '0:00' : `${avgWaitMin}:${avgWaitSecStr}`;
-                      %>
-                      <%= displayValue %>
-                    </span>
-              </div>
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">💬</span>
-                    <span class="stat-secondary-label">Среднее время разговора:</span>
-                    <span class="stat-secondary-value">
-                      <% 
-                        const avgDurMin = Math.floor(results.stats.avgDuration / 60);
-                        const avgDurSec = results.stats.avgDuration % 60;
-                        const avgDurSecStr = avgDurSec < 10 ? '0' + avgDurSec : avgDurSec;
-                      %>
-                      <%= avgDurMin %>:<%= avgDurSecStr %>
-                    </span>
-              </div>
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">📊</span>
-                    <span class="stat-secondary-label">Среднее время в очереди:</span>
-                    <span class="stat-secondary-value"><%= results.stats.avgQueueTime %> сек</span>
-              </div>
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">📈</span>
-                    <span class="stat-secondary-label">Пиковый час:</span>
-                    <span class="stat-secondary-value"><%= results.stats.peakHour %></span>
-            </div>
-                  <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">⚡</span>
-                    <span class="stat-secondary-label">ASA:</span>
-                    <span class="stat-secondary-value">
-                      <% 
-                        const asa = results.stats.asa || 0;
-                        const asaMin = Math.floor(asa / 60);
-                        const asaSec = asa % 60;
-                        const asaSecStr = asaSec < 10 ? '0' + asaSec : asaSec;
-                      %>
-                      <%= asaMin %>:<%= asaSecStr %>
-                    </span>
-              </div>
-                  <div class="stat-secondary">
-                    <span class="stat-secondary-icon">📉</span>
-                    <span class="stat-secondary-label">Abandon Rate:</span>
-                    <span class="stat-secondary-value"><%= results.stats.abandonRate || 0 %>%</span>
-              </div>
-                  <% } %>
-              </div>
-            </div>
+          <div class="kpi-card success">
+            <div class="kpi-icon">✅</div>
+            <div class="kpi-label">Процент ответа</div>
+            <div class="kpi-value"><%= results.stats.answerRate %>%</div>
+            <div class="kpi-subtitle"><%= results.stats.answeredCalls %> из <%= results.stats.totalCalls %></div>
           </div>
+          <div class="kpi-card error">
+            <div class="kpi-icon">❌</div>
+            <div class="kpi-label">Пропущенные</div>
+            <div class="kpi-value"><%= results.stats.abandonedCalls %></div>
+            <div class="kpi-subtitle"><%= results.stats.totalCalls > 0 ? Math.round(results.stats.abandonedCalls / results.stats.totalCalls * 100) : 0 %>% от общего</div>
+          </div>
+          <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
+          <div class="kpi-card warning">
+            <div class="kpi-icon">⏱️</div>
+            <div class="kpi-label">SLA (20 сек)</div>
+            <div class="kpi-value"><%= results.stats.slaRate %>%</div>
+          </div>
+          <% } %>
+        </div>
+
+        <!-- Callbacks Section -->
+        <div class="callback-section">
+          <h3 class="callback-title"><span>↩️</span> Перезвоны и время</h3>
+          <div class="callback-grid">
+            <div class="callback-item">
+              <div class="callback-item-label">Перезвонил сам</div>
+              <div class="callback-item-value"><%= results.stats.clientCallbacks || 0 %></div>
+            </div>
+            <div class="callback-item success">
+              <div class="callback-item-label">Перезвонили мы</div>
+              <div class="callback-item-value"><%= results.stats.agentCallbacks || 0 %></div>
+            </div>
+            <div class="callback-item error">
+              <div class="callback-item-label">Не обработан</div>
+              <% 
+                const clientCb = results.stats.clientCallbacks || 0;
+                const agentCb = results.stats.agentCallbacks || 0;
+                const notProcessed = results.stats.abandonedCalls - clientCb - agentCb;
+              %>
+              <div class="callback-item-value"><%= notProcessed >= 0 ? notProcessed : 0 %></div>
+            </div>
+            <div class="callback-item">
+              <div class="callback-item-label">Ср. ожидание</div>
+              <% 
+                const avgWaitTime = results.stats.avgWaitTimeAnswered || results.stats.avgWaitTime || 0;
+                const avgWaitMin = Math.floor(avgWaitTime / 60);
+                const avgWaitSec = Math.round(avgWaitTime % 60);
+              %>
+              <div class="callback-item-value"><%= avgWaitMin %>:<%= avgWaitSec < 10 ? '0' : '' %><%= avgWaitSec %></div>
+            </div>
+            <div class="callback-item">
+              <div class="callback-item-label">Ср. разговор</div>
+              <% 
+                const avgDurMin = Math.floor(results.stats.avgDuration / 60);
+                const avgDurSec = results.stats.avgDuration % 60;
+              %>
+              <div class="callback-item-value"><%= avgDurMin %>:<%= avgDurSec < 10 ? '0' : '' %><%= avgDurSec %></div>
+            </div>
+            <div class="callback-item">
+              <div class="callback-item-label">Пиковый час</div>
+              <div class="callback-item-value"><%= results.stats.peakHour %></div>
+            </div>
+            <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
+            <div class="callback-item">
+              <div class="callback-item-label">ASA</div>
+              <% 
+                const asa = results.stats.asa || 0;
+                const asaMin = Math.floor(asa / 60);
+                const asaSec = asa % 60;
+              %>
+              <div class="callback-item-value"><%= asaMin %>:<%= asaSec < 10 ? '0' : '' %><%= asaSec %></div>
+            </div>
+            <% } %>
+          </div>
+        </div>
           </div>
         </section>
 
@@ -330,7 +251,7 @@
                 <h3 class="table-title">Детальный лог звонков</h3>
                 <div class="table-controls">
                   <div class="items-per-page">
-                    <label style="font-size: 0.875rem; margin-right: var(--md-spacing-xs);">Показывать:</label>
+                    <label>Показывать:</label>
                     <select id="items-per-page">
                       <option value="10">10</option>
                       <option value="25" selected>25</option>
@@ -426,6 +347,180 @@
               <!-- Список email адресов будет загружен через JavaScript -->
               <div style="text-align: center; color: var(--md-sys-color-on-surface-variant); padding: var(--md-spacing-md);">
                 Выберите очередь для просмотра email адресов
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Management Modal -->
+      <div id="settings-modal" class="modal" style="display: none;">
+        <div class="modal-overlay" id="settings-modal-overlay"></div>
+        <div class="modal-content" style="max-width: 800px;">
+          <div class="modal-header">
+            <h2 class="modal-title">⚙️ Системные настройки</h2>
+            <button type="button" class="modal-close" id="close-settings-modal" aria-label="Закрыть">
+              <span>×</span>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div id="settings-loading" style="text-align: center; padding: var(--md-spacing-lg);">
+              <div>⏳ Загрузка настроек...</div>
+            </div>
+            <div id="settings-form" style="display: none;">
+              <div style="display: grid; gap: var(--md-spacing-lg);">
+                <!-- Database Settings -->
+                <div>
+                  <h3 style="margin: 0 0 var(--md-spacing-md) 0; font-size: 1rem; font-weight: 600; color: var(--md-sys-color-on-surface);">База данных</h3>
+                  <div style="display: grid; gap: var(--md-spacing-md);">
+                    <div>
+                      <label class="form-label">Хост базы данных</label>
+                      <input type="text" class="form-input" id="setting-DB_HOST" placeholder="localhost">
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--md-spacing-md);">
+                      <div>
+                        <label class="form-label">Пользователь</label>
+                        <input type="text" class="form-input" id="setting-DB_USER" placeholder="freepbxuser">
+                      </div>
+                      <div>
+                        <label class="form-label">Пароль</label>
+                        <input type="password" class="form-input" id="setting-DB_PASS" placeholder="password">
+                      </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--md-spacing-md);">
+                      <div>
+                        <label class="form-label">Название базы данных</label>
+                        <input type="text" class="form-input" id="setting-DB_NAME" placeholder="asterisk">
+                      </div>
+                      <div>
+                        <label class="form-label">Адаптер базы данных</label>
+                        <select class="form-input" id="setting-DB_ADAPTER">
+                          <option value="mysql2">mysql2</option>
+                          <option value="sequelize">sequelize</option>
+                          <option value="knex">knex</option>
+                          <option value="objection">objection</option>
+                          <option value="bookshelf">bookshelf</option>
+                          <option value="typeorm">typeorm</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label class="form-label">Лимит подключений</label>
+                      <input type="number" class="form-input" id="setting-DB_CONNECTION_LIMIT" placeholder="20" min="1">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- SMTP Settings -->
+                <div>
+                  <h3 style="margin: 0 0 var(--md-spacing-md) 0; font-size: 1rem; font-weight: 600; color: var(--md-sys-color-on-surface);">SMTP (Email)</h3>
+                  <div style="display: grid; gap: var(--md-spacing-md);">
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--md-spacing-md);">
+                      <div>
+                        <label class="form-label">SMTP сервер</label>
+                        <input type="text" class="form-input" id="setting-SMTP_HOST" placeholder="smtp.gmail.com">
+                      </div>
+                      <div>
+                        <label class="form-label">Порт</label>
+                        <input type="number" class="form-input" id="setting-SMTP_PORT" placeholder="587" min="1" max="65535">
+                      </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--md-spacing-md);">
+                      <div>
+                        <label class="form-label">Email пользователя</label>
+                        <input type="email" class="form-input" id="setting-SMTP_USER" placeholder="your_email@gmail.com">
+                      </div>
+                      <div>
+                        <label class="form-label">Пароль</label>
+                        <input type="password" class="form-input" id="setting-SMTP_PASS" placeholder="password">
+                      </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--md-spacing-md);">
+                      <div>
+                        <label class="form-label">Безопасное соединение (TLS/SSL)</label>
+                        <select class="form-input" id="setting-SMTP_SECURE">
+                          <option value="false">Нет</option>
+                          <option value="true">Да</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="form-label">Имя отправителя</label>
+                        <input type="text" class="form-input" id="setting-EMAIL_FROM_NAME" placeholder="Asterisk Analytics">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="form-label">Расписание отправки (Cron)</label>
+                      <input type="text" class="form-input" id="setting-EMAIL_CRON_SCHEDULE" placeholder="59 23 * * *">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Server Settings -->
+                <div>
+                  <h3 style="margin: 0 0 var(--md-spacing-md) 0; font-size: 1rem; font-weight: 600; color: var(--md-sys-color-on-surface);">Сервер</h3>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--md-spacing-md);">
+                    <div>
+                      <label class="form-label">Порт сервера</label>
+                      <input type="number" class="form-input" id="setting-PORT" placeholder="3000" min="1" max="65535">
+                    </div>
+                    <div>
+                      <label class="form-label">Часовой пояс</label>
+                      <input type="text" class="form-input" id="setting-TZ" placeholder="Europe/Moscow">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Other Settings -->
+                <div>
+                  <h3 style="margin: 0 0 var(--md-spacing-md) 0; font-size: 1rem; font-weight: 600; color: var(--md-sys-color-on-surface);">Прочие настройки</h3>
+                  <div style="display: grid; gap: var(--md-spacing-md);">
+                    <div>
+                      <label class="form-label">Путь к записям разговоров</label>
+                      <input type="text" class="form-input" id="setting-RECORDINGS_PATH" placeholder="/var/spool/asterisk/monitor">
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--md-spacing-md);">
+                      <div>
+                        <label class="form-label">Минимальная длина номера для исходящих</label>
+                        <input type="number" class="form-input" id="setting-OUTBOUND_MIN_LENGTH" placeholder="4" min="1">
+                      </div>
+                      <div>
+                        <label class="form-label">Время жизни кэша очередей (мс)</label>
+                        <input type="number" class="form-input" id="setting-QUEUES_CACHE_TTL" placeholder="3600000" min="0">
+                      </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--md-spacing-md);">
+                      <div>
+                        <label class="form-label">Ультра-быстрые запросы</label>
+                        <select class="form-input" id="setting-USE_ULTRA_FAST_QUERIES">
+                          <option value="true">Включено</option>
+                          <option value="false">Выключено</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="form-label">Параллельные запросы</label>
+                        <select class="form-input" id="setting-USE_PARALLEL_QUERIES">
+                          <option value="true">Включено</option>
+                          <option value="false">Выключено</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="form-label">Режим отладки</label>
+                        <select class="form-input" id="setting-DEBUG">
+                          <option value="false">Выключено</option>
+                          <option value="true">Включено</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; gap: var(--md-spacing-md); justify-content: flex-end; margin-top: var(--md-spacing-lg); padding-top: var(--md-spacing-lg); border-top: 1px solid var(--md-sys-color-outline);">
+                <button type="button" class="export-btn" id="settings-cancel-btn" style="background: var(--md-sys-color-surface-variant); color: var(--md-sys-color-on-surface-variant);">
+                  Отмена
+                </button>
+                <button type="button" class="export-btn" id="settings-save-btn">
+                  💾 Сохранить настройки
+                </button>
               </div>
             </div>
           </div>
@@ -656,15 +751,322 @@
     })();
   </script>
   
+  <!-- Settings Management Modal Script -->
+  <script>
+    (function() {
+      const settingsModal = document.getElementById('settings-modal');
+      const settingsModalOverlay = document.getElementById('settings-modal-overlay');
+      const closeSettingsModal = document.getElementById('close-settings-modal');
+      const openSettingsModalBtn = document.getElementById('open-settings-modal-btn');
+      const settingsForm = document.getElementById('settings-form');
+      const settingsLoading = document.getElementById('settings-loading');
+      const settingsSaveBtn = document.getElementById('settings-save-btn');
+      const settingsCancelBtn = document.getElementById('settings-cancel-btn');
+      
+      if (!settingsModal || !openSettingsModalBtn) {
+        return;
+      }
+      
+      // Открытие модального окна
+      openSettingsModalBtn.addEventListener('click', async () => {
+        settingsModal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        settingsForm.style.display = 'none';
+        settingsLoading.style.display = 'block';
+        
+        try {
+          const response = await fetch('/api/settings');
+          const data = await response.json();
+          
+          if (data.success && data.settings) {
+            // Заполняем форму значениями
+            Object.keys(data.settings).forEach(key => {
+              const input = document.getElementById(`setting-${key}`);
+              if (input) {
+                input.value = data.settings[key] || '';
+              }
+            });
+          }
+        } catch (error) {
+          console.error('Ошибка загрузки настроек:', error);
+          showToast('❌ Ошибка загрузки настроек', 'error');
+        } finally {
+          settingsLoading.style.display = 'none';
+          settingsForm.style.display = 'block';
+        }
+      });
+      
+      // Закрытие модального окна
+      function closeSettingsModal() {
+        settingsModal.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+      
+      closeSettingsModal.addEventListener('click', closeSettingsModal);
+      settingsModalOverlay.addEventListener('click', closeSettingsModal);
+      settingsCancelBtn.addEventListener('click', closeSettingsModal);
+      
+      // Закрытие по Escape
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && settingsModal.style.display === 'flex') {
+          closeSettingsModal();
+        }
+      });
+      
+      // Сохранение настроек
+      settingsSaveBtn.addEventListener('click', async () => {
+        try {
+          settingsSaveBtn.disabled = true;
+          settingsSaveBtn.innerHTML = '⏳ Сохранение...';
+          
+          // Собираем все настройки из формы
+          const settings = {};
+          const inputs = settingsForm.querySelectorAll('[id^="setting-"]');
+          inputs.forEach(input => {
+            const key = input.id.replace('setting-', '');
+            settings[key] = input.value.trim();
+          });
+          
+          const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ settings })
+          });
+          
+          const data = await response.json();
+          
+          if (data.success) {
+            showToast('✅ Настройки успешно сохранены. Перезапустите приложение для применения изменений.', 'success');
+            setTimeout(() => {
+              closeSettingsModal();
+            }, 1500);
+          } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+          }
+        } catch (error) {
+          console.error('Ошибка сохранения настроек:', error);
+          alert('Ошибка при сохранении настроек');
+        } finally {
+          settingsSaveBtn.disabled = false;
+          settingsSaveBtn.innerHTML = '💾 Сохранить настройки';
+        }
+      });
+    })();
+  </script>
+  
+  <!-- Settings Management Modal Script -->
+  <script>
+    (function() {
+      const settingsModal = document.getElementById('settings-modal');
+      const settingsModalOverlay = document.getElementById('settings-modal-overlay');
+      const closeSettingsModal = document.getElementById('close-settings-modal');
+      const openSettingsModalBtn = document.getElementById('open-settings-modal-btn');
+      const settingsForm = document.getElementById('settings-form');
+      const settingsLoading = document.getElementById('settings-loading');
+      const settingsSaveBtn = document.getElementById('settings-save-btn');
+      const settingsCancelBtn = document.getElementById('settings-cancel-btn');
+      
+      if (!settingsModal || !openSettingsModalBtn) {
+        return;
+      }
+      
+      // Открытие модального окна
+      openSettingsModalBtn.addEventListener('click', async () => {
+        settingsModal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        settingsForm.style.display = 'none';
+        settingsLoading.style.display = 'block';
+        
+        try {
+          const response = await fetch('/api/settings');
+          const data = await response.json();
+          
+          if (data.success && data.settings) {
+            // Заполняем форму значениями
+            Object.keys(data.settings).forEach(key => {
+              const input = document.getElementById(`setting-${key}`);
+              if (input) {
+                input.value = data.settings[key] || '';
+              }
+            });
+          }
+        } catch (error) {
+          console.error('Ошибка загрузки настроек:', error);
+          if (typeof showToast === 'function') {
+            showToast('❌ Ошибка загрузки настроек', 'error');
+          } else {
+            alert('Ошибка загрузки настроек');
+          }
+        } finally {
+          settingsLoading.style.display = 'none';
+          settingsForm.style.display = 'block';
+        }
+      });
+      
+      // Закрытие модального окна
+      function closeSettingsModalFunc() {
+        settingsModal.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+      
+      closeSettingsModal.addEventListener('click', closeSettingsModalFunc);
+      settingsModalOverlay.addEventListener('click', closeSettingsModalFunc);
+      if (settingsCancelBtn) {
+        settingsCancelBtn.addEventListener('click', closeSettingsModalFunc);
+      }
+      
+      // Закрытие по Escape
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && settingsModal.style.display === 'flex') {
+          closeSettingsModalFunc();
+        }
+      });
+      
+      // Сохранение настроек
+      if (settingsSaveBtn) {
+        settingsSaveBtn.addEventListener('click', async () => {
+          try {
+            settingsSaveBtn.disabled = true;
+            settingsSaveBtn.innerHTML = '⏳ Сохранение...';
+            
+            // Собираем все настройки из формы
+            const settings = {};
+            const inputs = settingsForm.querySelectorAll('[id^="setting-"]');
+            inputs.forEach(input => {
+              const key = input.id.replace('setting-', '');
+              settings[key] = input.value.trim();
+            });
+            
+            const response = await fetch('/api/settings', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ settings })
+            });
+            
+          const data = await response.json();
+          
+          if (data.success) {
+            if (data.restarting) {
+              if (typeof showToast === 'function') {
+                showToast('✅ Настройки сохранены. Приложение перезапускается...', 'success');
+              } else {
+                alert('✅ Настройки сохранены. Приложение перезапускается...');
+              }
+              
+              // Показываем индикатор загрузки
+              settingsLoading.style.display = 'block';
+              settingsForm.style.display = 'none';
+              
+              // Ждем несколько секунд и перезагружаем страницу
+              setTimeout(() => {
+                window.location.reload();
+              }, 3000);
+            } else {
+              if (typeof showToast === 'function') {
+                showToast('✅ Настройки успешно сохранены', 'success');
+              } else {
+                alert('✅ Настройки успешно сохранены');
+              }
+              setTimeout(() => {
+                closeSettingsModalFunc();
+              }, 1500);
+            }
+          } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+          }
+          } catch (error) {
+            console.error('Ошибка сохранения настроек:', error);
+            alert('Ошибка при сохранении настроек');
+          } finally {
+            settingsSaveBtn.disabled = false;
+            settingsSaveBtn.innerHTML = '💾 Сохранить настройки';
+          }
+        });
+      }
+    })();
+  </script>
+  
   <!-- Navigation Script -->
   <script>
+    // Функция обновления названий очередей после загрузки
+    async function updateQueueNames() {
+      const queueSelect = document.getElementById('queue_name');
+      if (!queueSelect) return;
+      
+      try {
+        const response = await fetch('/api/queue-names');
+        if (response.ok) {
+          const queueNames = await response.json();
+          
+          // Обновляем текст опций в select
+          Array.from(queueSelect.options).forEach(option => {
+            const queueNumber = option.value;
+            if (queueNumber && queueNames[queueNumber]) {
+              const formattedName = `${queueNumber} (${queueNames[queueNumber]})`;
+              if (option.text !== formattedName) {
+                option.text = formattedName;
+              }
+            }
+          });
+        }
+      } catch (error) {
+        // Игнорируем ошибки - названия могут быть уже загружены на сервере
+        console.debug('Не удалось обновить названия очередей:', error);
+      }
+    }
+    
     // Сохранение и восстановление значений фильтров
 document.addEventListener('DOMContentLoaded', function() {
+      // Обновляем названия очередей после загрузки страницы
+      updateQueueNames();
       const viewSelectorBtns = document.querySelectorAll('.view-selector-btn');
       const viewTypeInput = document.getElementById('view_type');
       const queueSelect = document.getElementById('queue_name');
       const startDateInput = document.getElementById('start_date');
       const endDateInput = document.getElementById('end_date');
+      const dateRangeInput = document.getElementById('date_range');
+      
+      // Инициализация Flatpickr для выбора диапазона дат
+      let flatpickrInstance = null;
+      if (dateRangeInput) {
+        const startDate = startDateInput ? startDateInput.value : '';
+        const endDate = endDateInput ? endDateInput.value : '';
+        
+        flatpickrInstance = flatpickr(dateRangeInput, {
+          mode: "range",
+          dateFormat: "d.m.Y",
+          locale: {
+            firstDayOfWeek: 1,
+            weekdays: { shorthand: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"], longhand: ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"] },
+            months: { shorthand: ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"], longhand: ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"] }
+          },
+          defaultDate: startDate && endDate ? [startDate, endDate] : null,
+          onChange: function(selectedDates, dateStr, instance) {
+            if (selectedDates.length === 2) {
+              const start = selectedDates[0];
+              const end = selectedDates[1];
+              const startFormatted = start.getFullYear() + '-' + 
+                String(start.getMonth() + 1).padStart(2, '0') + '-' + 
+                String(start.getDate()).padStart(2, '0');
+              const endFormatted = end.getFullYear() + '-' + 
+                String(end.getMonth() + 1).padStart(2, '0') + '-' + 
+                String(end.getDate()).padStart(2, '0');
+              
+              if (startDateInput) startDateInput.value = startFormatted;
+              if (endDateInput) endDateInput.value = endFormatted;
+              
+              saveFilters();
+            } else if (selectedDates.length === 0) {
+              if (startDateInput) startDateInput.value = '';
+              if (endDateInput) endDateInput.value = '';
+            }
+          }
+        });
+      }
       
       // Функция сохранения значений фильтров
       function saveFilters() {
@@ -696,6 +1098,11 @@ document.addEventListener('DOMContentLoaded', function() {
               if (endDateInput && filters.endDate && !endDateInput.value) {
                 endDateInput.value = filters.endDate;
               }
+              
+              // Обновляем flatpickr после восстановления
+              if (flatpickrInstance && filters.startDate && filters.endDate) {
+                flatpickrInstance.setDate([filters.startDate, filters.endDate], false);
+              }
               // Очередь восстанавливаем всегда, если она есть в сохраненных фильтрах
               // и если мы в представлении очередей (поле не disabled)
               if (queueSelect && filters.queue) {
@@ -722,6 +1129,11 @@ document.addEventListener('DOMContentLoaded', function() {
       // Восстанавливаем фильтры при загрузке страницы
       restoreFilters();
       
+      // Обновляем flatpickr после восстановления фильтров
+      if (flatpickrInstance && startDateInput && endDateInput && startDateInput.value && endDateInput.value) {
+        flatpickrInstance.setDate([startDateInput.value, endDateInput.value], false);
+      }
+      
       // Автоматическая отправка формы при загрузке, если есть параметры в URL
       const urlParams = new URLSearchParams(window.location.search);
       const hasUrlParams = urlParams.has('start_date') || urlParams.has('end_date') || urlParams.has('queue_name');
@@ -737,12 +1149,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       // Сохраняем фильтры при изменении значений
-      if (startDateInput) {
-        startDateInput.addEventListener('change', saveFilters);
-      }
-      if (endDateInput) {
-        endDateInput.addEventListener('change', saveFilters);
-      }
+      // (для date range это уже обрабатывается в onChange flatpickr)
       if (queueSelect) {
         queueSelect.addEventListener('change', saveFilters);
       }
@@ -774,6 +1181,11 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           if (endDateInput && filters.endDate) {
             endDateInput.value = filters.endDate;
+          }
+          
+          // Обновляем flatpickr
+          if (flatpickrInstance && filters.startDate && filters.endDate) {
+            flatpickrInstance.setDate([filters.startDate, filters.endDate], false);
           }
           
           // Управляем состоянием поля очереди
@@ -886,6 +1298,11 @@ document.addEventListener('DOMContentLoaded', function() {
           if (startDateInput) startDateInput.value = startDate;
           if (endDateInput) endDateInput.value = endDate;
           
+          // Обновляем flatpickr
+          if (flatpickrInstance && startDate && endDate) {
+            flatpickrInstance.setDate([startDate, endDate], false);
+          }
+          
           // Обновляем активную кнопку
           quickFilterBtns.forEach(b => b.classList.remove('active'));
           this.classList.add('active');
@@ -898,15 +1315,118 @@ document.addEventListener('DOMContentLoaded', function() {
       // Экспорт данных
       const exportBtn = document.getElementById('export-btn');
       if (exportBtn) {
-        exportBtn.addEventListener('click', function() {
+        exportBtn.addEventListener('click', async function() {
           <% if (typeof results !== 'undefined' && results && results.calls) { %>
+          const format = confirm('Нажмите OK для экспорта в Excel (XLSX) или Отмена для CSV');
+          
+          if (format) {
+            // Экспорт в Excel
+            try {
+              const startDateInput = document.getElementById('start_date');
+              const endDateInput = document.getElementById('end_date');
+              const queueSelect = document.getElementById('queue_name');
+              const viewTypeInput = document.getElementById('view_type');
+              
+              const startDate = (startDateInput && startDateInput.value) ? startDateInput.value.trim() : '';
+              const endDate = (endDateInput && endDateInput.value) ? endDateInput.value.trim() : '';
+              const queueName = (queueSelect && queueSelect.value) ? queueSelect.value.trim() : '';
+              const viewType = (viewTypeInput && viewTypeInput.value) ? viewTypeInput.value.trim() : 'queue';
+              
+              if (!startDate || !endDate) {
+                alert('Необходимо указать даты начала и конца периода. Текущие значения: start=' + startDate + ', end=' + endDate);
+                return;
+              }
+              
+              console.log('Экспорт данных:', { startDate, endDate, queueName, viewType });
+              
+              // Используем URLSearchParams для правильной передачи данных
+              const formData = new URLSearchParams();
+              formData.append('queue_name', queueName || '');
+              formData.append('start_date', startDate);
+              formData.append('end_date', endDate);
+              formData.append('view_type', viewType);
+              
+              console.log('Отправка данных:', formData.toString());
+              
+              const response = await fetch('/export-report-excel', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: formData.toString()
+              });
+              
+              if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                
+                // Получаем имя файла из заголовка или формируем сами
+                let downloadFilename = 'export.xlsx';
+                const contentDisposition = response.headers.get('Content-Disposition');
+                if (contentDisposition) {
+                  // Пытаемся извлечь из filename*=UTF-8''
+                  const utf8Match = contentDisposition.match(/filename\*=UTF-8''(.+?)(?:;|$)/);
+                  if (utf8Match) {
+                    try {
+                      downloadFilename = decodeURIComponent(utf8Match[1]);
+                    } catch (e) {
+                      // Если не получилось декодировать, используем как есть
+                      downloadFilename = utf8Match[1];
+                    }
+                  } else {
+                    // Или из обычного filename
+                    const filenameMatch = contentDisposition.match(/filename="?(.+?)"?\s*(?:;|$)/);
+                    if (filenameMatch) {
+                      downloadFilename = filenameMatch[1];
+                    }
+                  }
+                }
+                
+                // Если не удалось извлечь, формируем имя сами
+                if (downloadFilename === 'export.xlsx') {
+                  if (viewType === 'queue') {
+                    downloadFilename = `Очередь_${queueName}_${startDate}_${endDate}.xlsx`;
+                  } else if (viewType === 'outbound_queue') {
+                    downloadFilename = `Исх_очередь_${queueName}_${startDate}_${endDate}.xlsx`;
+                  } else if (viewType === 'inbound') {
+                    downloadFilename = `Входящие_${startDate}_${endDate}.xlsx`;
+                  } else {
+                    downloadFilename = `Исходящие_${startDate}_${endDate}.xlsx`;
+                  }
+                }
+                
+                a.download = downloadFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+              } else {
+                const error = await response.json();
+                alert('Ошибка экспорта: ' + (error.error || 'Неизвестная ошибка'));
+              }
+            } catch (error) {
+              alert('Ошибка экспорта: ' + error.message);
+            }
+          } else {
+            // Экспорт в CSV (старый способ)
           const calls = <%- JSON.stringify(results.calls) %>;
           const stats = <%- JSON.stringify(results.stats) %>;
           
           // Формируем CSV
+          // Функция форматирования даты без преобразования таймзоны (данные уже в локальном времени)
+          const formatDateTimeCSV = (dateString) => {
+            if (!dateString) return '';
+            const str = dateString.toString();
+            const match = str.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+            if (match) return `${match[3]}.${match[2]}.${match[1]} ${match[4]}:${match[5]}`;
+            return str;
+          };
+          
           let csv = 'Дата и время,Номер клиента,Статус,Длительность (сек),Ожидание (сек),Агент\n';
           calls.forEach(call => {
-            const date = call.startTime ? new Date(call.startTime).toLocaleString('ru-RU') : '';
+            const date = formatDateTimeCSV(call.startTime);
             // Для исходящих звонков показываем destination (длинный номер), если он длиннее src
             const minLength = 4;
             const srcLen = call.clientNumber ? call.clientNumber.toString().trim().length : 0;
@@ -941,6 +1461,7 @@ document.addEventListener('DOMContentLoaded', function() {
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
+          }
           <% } else { %>
           alert('Нет данных для экспорта. Сначала выполните анализ.');
 <% } %>

@@ -33,17 +33,20 @@
       
       if (data.status === 'online' && data.database === 'connected') {
         statusIndicator.textContent = '●';
-        statusText.textContent = 'System Online';
-        statusContainer.className = 'performance-indicator good';
+        statusIndicator.style.color = '#10b981';
+        statusText.textContent = 'Online';
+        statusContainer.className = 'performance-indicator online';
       } else {
         statusIndicator.textContent = '●';
-        statusText.textContent = 'System Warning';
+        statusIndicator.style.color = '#f59e0b';
+        statusText.textContent = 'Warning';
         statusContainer.className = 'performance-indicator warning';
       }
     } catch (error) {
       statusIndicator.textContent = '●';
-      statusText.textContent = 'System Offline';
-      statusContainer.className = 'performance-indicator critical';
+      statusIndicator.style.color = '#ef4444';
+      statusText.textContent = 'Offline';
+      statusContainer.className = 'performance-indicator offline';
       console.error('Status check failed:', error);
     }
   }

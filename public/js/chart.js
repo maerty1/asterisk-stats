@@ -393,9 +393,15 @@ function exportToCSV() {
           ? (call.destination || call.clientNumber || '-') 
           : (call.clientNumber || '-');
         
+        // Извлекаем дату и время напрямую из строки (данные уже в локальном времени)
+        const dateMatch = (call.startTime || '').toString().match(/(\d{4})-(\d{2})-(\d{2})/);
+        const timeMatch = (call.startTime || '').toString().match(/(\d{2}):(\d{2})/);
+        const dateStr = dateMatch ? `${dateMatch[3]}.${dateMatch[2]}.${dateMatch[1]}` : '';
+        const timeStr = timeMatch ? `${timeMatch[1]}:${timeMatch[2]}` : '';
+        
         return [
-          call.startTime.split('T')[0],
-          new Date(call.startTime).toLocaleTimeString('ru-RU'),
+          dateStr,
+          timeStr,
           displayNumber,
           call.waitTime || 0,
           call.duration || 0,
@@ -618,12 +624,14 @@ class CallsTableManager {
 
       switch (this.sortField) {
         case 'date':
-          aVal = new Date(a.startTime);
-          bVal = new Date(b.startTime);
+          // Строки формата YYYY-MM-DD сортируются корректно как строки
+          aVal = (a.startTime || '').toString();
+          bVal = (b.startTime || '').toString();
           break;
         case 'time':
-          aVal = new Date(a.startTime).getTime();
-          bVal = new Date(b.startTime).getTime();
+          // Строки формата YYYY-MM-DD HH:MM:SS сортируются корректно как строки
+          aVal = (a.startTime || '').toString();
+          bVal = (b.startTime || '').toString();
           break;
         case 'client':
           aVal = (a.clientNumber || '').toLowerCase();
@@ -706,8 +714,11 @@ class CallsTableManager {
       this.filteredCalls = this.filteredCalls.filter(call => {
         if (!call.startTime) return false;
 
-        const callTime = new Date(call.startTime);
-        const hours = callTime.getHours();
+        // Извлекаем часы напрямую из строки (данные уже в локальном времени)
+        const str = call.startTime.toString();
+        const match = str.match(/(\d{2}):(\d{2})/);
+        if (!match) return false;
+        const hours = parseInt(match[1], 10);
 
         switch (this.filters.time) {
           case 'morning':
@@ -977,14 +988,21 @@ class CallsTableManager {
   }
 
   createTableRow(call) {
+    // Функции форматирования без преобразования таймзоны (данные уже в локальном времени)
     const formatDate = (dateString) => {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('ru-RU');
+      if (!dateString) return '';
+      const str = dateString.toString();
+      const match = str.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (match) return `${match[3]}.${match[2]}.${match[1]}`;
+      return str;
     };
 
     const formatTime = (dateString) => {
-      const date = new Date(dateString);
-      return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      if (!dateString) return '';
+      const str = dateString.toString();
+      const match = str.match(/(\d{2}):(\d{2})/);
+      if (match) return `${match[1]}:${match[2]}`;
+      return str;
     };
 
     const formatDuration = (seconds) => {
@@ -1025,14 +1043,15 @@ class CallsTableManager {
 
     const formatDateTime = (dateString) => {
       if (!dateString) return '-';
-      const date = new Date(dateString);
-      return date.toLocaleString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
+      // Данные в БД уже в локальном времени - извлекаем напрямую без преобразования
+      const str = dateString.toString();
+      // Формат "YYYY-MM-DD HH:MM:SS" или "YYYY-MM-DDTHH:MM:SS"
+      const match = str.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+      if (match) {
+        return `${match[3]}.${match[2]}.${match[1]}, ${match[4]}:${match[5]}`;
+      }
+      // Fallback для других форматов
+      return str;
     };
 
     const isCompleted = call.status === 'completed_by_agent' || call.status === 'completed_by_caller';
@@ -1422,17 +1441,16 @@ function initializeChart(data) {
   const callsByDay = {};
   data.calls.forEach(call => {
     try {
-      const dateObj = new Date(call.startTime);
-      if (isNaN(dateObj.getTime())) {
+      // Извлекаем дату напрямую из строки (данные уже в локальном времени)
+      const str = (call.startTime || '').toString();
+      const match = str.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (!match) {
         console.warn('Неверный формат даты:', call.startTime);
         return;
       }
 
-      const dateKey = dateObj.toLocaleDateString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit'
-      });
-      const isoDate = dateObj.toISOString().split('T')[0];
+      const dateKey = `${match[3]}.${match[2]}`; // DD.MM
+      const isoDate = `${match[1]}-${match[2]}-${match[3]}`; // YYYY-MM-DD
 
       if (!callsByDay[isoDate]) {
         callsByDay[isoDate] = {
