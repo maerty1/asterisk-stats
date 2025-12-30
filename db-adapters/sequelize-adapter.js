@@ -12,7 +12,7 @@ class SequelizeAdapter extends BaseAdapter {
     const dbConfig = {
       host: config.host || process.env.DB_HOST || 'localhost',
       username: config.user || process.env.DB_USER || 'freepbxuser',
-      password: config.password || process.env.DB_PASS || 'XCbMZ1TmmqGS',
+      password: config.password || process.env.DB_PASS || '',
       database: config.database || process.env.DB_NAME || 'asterisk',
       dialect: 'mysql',
       pool: {

@@ -12,7 +12,7 @@ class PrismaAdapter extends BaseAdapter {
     
     // Prisma использует DATABASE_URL из .env или прямые параметры
     const datasourceUrl = process.env.DATABASE_URL || 
-      `mysql://${config.user || process.env.DB_USER || 'freepbxuser'}:${config.password || process.env.DB_PASS || 'XCbMZ1TmmqGS'}@${config.host || process.env.DB_HOST || 'localhost'}/${config.database || process.env.DB_NAME || 'asterisk'}`;
+      `mysql://${config.user || process.env.DB_USER || 'freepbxuser'}:${config.password || process.env.DB_PASS || ''}@${config.host || process.env.DB_HOST || 'localhost'}/${config.database || process.env.DB_NAME || 'asterisk'}`;
     
     this.prisma = new PrismaClient({
       datasources: {

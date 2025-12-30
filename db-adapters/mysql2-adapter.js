@@ -12,7 +12,7 @@ class Mysql2Adapter extends BaseAdapter {
     this.DB_CONFIG = {
       host: config.host || process.env.DB_HOST || 'localhost',
       user: config.user || process.env.DB_USER || 'freepbxuser',
-      password: config.password || process.env.DB_PASS || 'XCbMZ1TmmqGS',
+      password: config.password || process.env.DB_PASS || '',
       database: config.database || process.env.DB_NAME || 'asterisk',
       connectionLimit: config.connectionLimit || parseInt(process.env.DB_CONNECTION_LIMIT) || 20,
       queueLimit: 0,

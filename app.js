@@ -88,7 +88,7 @@ async function initializeDatabaseAdapter() {
       const dbConfig = {
         host: settings.DB_HOST || process.env.DB_HOST || 'localhost',
         user: settings.DB_USER || process.env.DB_USER || 'freepbxuser',
-        password: settings.DB_PASS || process.env.DB_PASS || 'XCbMZ1TmmqGS',
+        password: settings.DB_PASS || process.env.DB_PASS || '',
         database: settings.DB_NAME || process.env.DB_NAME || 'asterisk',
         adapter: settings.DB_ADAPTER || process.env.DB_ADAPTER || 'mysql2',
         connectionLimit: parseInt(settings.DB_CONNECTION_LIMIT || process.env.DB_CONNECTION_LIMIT || '20')

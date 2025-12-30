@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS = {
   // Database settings
   DB_HOST: 'localhost',
   DB_USER: 'freepbxuser',
-  DB_PASS: 'XCbMZ1TmmqGS',
+    DB_PASS: '',
   DB_NAME: 'asterisk',
   DB_ADAPTER: 'mysql2',
   DB_CONNECTION_LIMIT: '20',

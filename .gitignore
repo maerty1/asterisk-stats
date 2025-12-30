@@ -111,6 +111,18 @@ test.html
 # update_screenshots.sh - временный скрипт
 update_screenshots.sh
 
+# Приложение лог файлы
+app.log
+*.log
+
+# Service файлы (системные, не должны быть в репо)
+*.service
+
+# Временные скрипты (удалены из проекта)
+# restart-helper.sh
+# start.sh
+# update-env.sh
+
 # ==========================================
 # Git
 # ==========================================

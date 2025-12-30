@@ -18,7 +18,7 @@ class TypeORMAdapter extends BaseAdapter {
       type: 'mysql',
       host: config.host || process.env.DB_HOST || 'localhost',
       username: config.user || process.env.DB_USER || 'freepbxuser',
-      password: config.password || process.env.DB_PASS || 'XCbMZ1TmmqGS',
+      password: config.password || process.env.DB_PASS || '',
       database: config.database || process.env.DB_NAME || 'asterisk',
       synchronize: false,
       logging: process.env.DEBUG_DB === 'true',

@@ -1,0 +1,39 @@
+# ==========================================
+# Git Attributes для правильной обработки файлов
+# ==========================================
+
+# Автоматически определять текстовые файлы и нормализовать окончания строк
+* text=auto
+
+# Явно указать текстовые файлы
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.ejs text eol=lf
+*.sql text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+*.log text eol=lf
+
+# Бинарные файлы
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+
+# Исполняемые скрипты
+*.sh text eol=lf
+
+# Игнорировать различия в окончаниях строк для Windows
+*.bat text eol=crlf
+

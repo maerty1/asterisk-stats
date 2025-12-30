@@ -1,16 +1,23 @@
 /**
  * Модуль оптимизации работы с БД (аналог PDO в PHP)
- * Теперь использует систему адаптеров для поддержки различных ORM/коннекторов
+ * Использует mysql2 адаптер (по умолчанию)
  */
 
-const { getAdapter, resetAdapter } = require('./db-factory');
+const Mysql2Adapter = require('./db-adapters/mysql2-adapter');
 
 // Получаем адаптер БД динамически (будет создан после загрузки настроек)
 let adapter = null;
 
 function getDbAdapter() {
   if (!adapter) {
-    adapter = getAdapter();
+    const config = {
+      host: process.env.DB_HOST || 'localhost',
+      user: process.env.DB_USER || 'freepbxuser',
+      password: process.env.DB_PASS || '',
+      database: process.env.DB_NAME || 'asterisk',
+      connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT) || 20
+    };
+    adapter = new Mysql2Adapter(config);
   }
   return adapter;
 }
@@ -150,10 +157,19 @@ function getPool() {
 
 // Функция для инициализации адаптера после загрузки настроек
 function initAdapter(config) {
-  if (adapter) {
-    resetAdapter();
-}
-  adapter = getAdapter(config);
+  // Закрываем старый адаптер, если он есть
+  if (adapter && adapter.pool && adapter.pool.end) {
+    adapter.pool.end().catch(() => {});
+  }
+  
+  // Создаем новый адаптер с переданной конфигурацией
+  adapter = new Mysql2Adapter(config || {
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'freepbxuser',
+    password: process.env.DB_PASS || '',
+    database: process.env.DB_NAME || 'asterisk',
+    connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT) || 20
+  });
   
   // Обновляем poolExport
   try {
