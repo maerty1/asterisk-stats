@@ -123,4 +123,228 @@ router.get('/test', (req, res) => {
   });
 });
 
+/**
+ * API: Получить запись звонка по uniqueid
+ * @swagger
+ * /api/recording/{uniqueid}:
+ *   get:
+ *     summary: Получить аудиозапись звонка по его идентификатору
+ *     tags: [Recordings]
+ *     parameters:
+ *       - in: path
+ *         name: uniqueid
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Уникальный идентификатор звонка (например 1768478301.261093)
+ *     responses:
+ *       200:
+ *         description: Аудиофайл записи
+ *         content:
+ *           audio/mpeg:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       404:
+ *         description: Запись не найдена
+ *       500:
+ *         description: Ошибка сервера
+ */
+router.get('/api/recording/:uniqueid', async (req, res) => {
+  const { uniqueid } = req.params;
+  const logger = require('../logger');
+  const { execute } = require('../db-optimizer');
+  const path = require('path');
+  const fs = require('fs');
+  
+  try {
+    // Валидация uniqueid (формат: числа.числа)
+    if (!uniqueid || !/^\d+\.\d+$/.test(uniqueid)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Неверный формат uniqueid. Ожидается формат: 1768478301.261093' 
+      });
+    }
+    
+    // Ищем запись в CDR по uniqueid
+    const [results] = await execute(`
+      SELECT recordingfile, calldate 
+      FROM asteriskcdrdb.cdr 
+      WHERE uniqueid = ? AND recordingfile != '' AND recordingfile IS NOT NULL
+      LIMIT 1
+    `, [uniqueid]);
+    
+    if (!results || results.length === 0) {
+      // Пробуем найти файл напрямую по uniqueid в имени
+      const recordingsPath = process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor';
+      
+      // Ищем файл рекурсивно по uniqueid
+      const findResult = require('child_process').execSync(
+        `find ${recordingsPath} -name "*${uniqueid}*" -type f 2>/dev/null | head -1`,
+        { encoding: 'utf8' }
+      ).trim();
+      
+      if (findResult) {
+        logger.info(`[Recording API] Найден файл по uniqueid: ${findResult}`);
+        return res.sendFile(findResult, (err) => {
+          if (err) {
+            logger.error(`[Recording API] Ошибка отправки файла:`, err);
+            res.status(500).json({ success: false, error: 'Ошибка при отправке файла' });
+          }
+        });
+      }
+      
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Запись для данного звонка не найдена' 
+      });
+    }
+    
+    const { recordingfile, calldate } = results[0];
+    
+    // Формируем путь к файлу на основе даты
+    const callDate = new Date(calldate);
+    const year = callDate.getFullYear();
+    const month = String(callDate.getMonth() + 1).padStart(2, '0');
+    const day = String(callDate.getDate()).padStart(2, '0');
+    
+    const recordingsPath = process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor';
+    const filePath = path.join(recordingsPath, String(year), month, day, recordingfile);
+    
+    // Проверяем существование файла
+    if (!fs.existsSync(filePath)) {
+      logger.warn(`[Recording API] Файл не найден по пути: ${filePath}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Файл записи не найден на сервере',
+        path: filePath 
+      });
+    }
+    
+    logger.info(`[Recording API] Отдаю запись: ${filePath}`);
+    
+    // Отправляем файл
+    res.sendFile(filePath, (err) => {
+      if (err) {
+        logger.error(`[Recording API] Ошибка отправки файла:`, err);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, error: 'Ошибка при отправке файла' });
+        }
+      }
+    });
+    
+  } catch (error) {
+    logger.error('[Recording API] Ошибка:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * API: Получить информацию о записи звонка (метаданные без скачивания)
+ * @swagger
+ * /api/recording/{uniqueid}/info:
+ *   get:
+ *     summary: Получить информацию о записи звонка
+ *     tags: [Recordings]
+ *     parameters:
+ *       - in: path
+ *         name: uniqueid
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Информация о записи
+ *       404:
+ *         description: Запись не найдена
+ */
+router.get('/api/recording/:uniqueid/info', async (req, res) => {
+  const { uniqueid } = req.params;
+  const logger = require('../logger');
+  const { execute } = require('../db-optimizer');
+  const path = require('path');
+  const fs = require('fs');
+  
+  try {
+    if (!uniqueid || !/^\d+\.\d+$/.test(uniqueid)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Неверный формат uniqueid' 
+      });
+    }
+    
+    // Ищем запись в CDR
+    const [results] = await execute(`
+      SELECT uniqueid, calldate, src, dst, duration, billsec, 
+             disposition, recordingfile, channel, dstchannel
+      FROM asteriskcdrdb.cdr 
+      WHERE uniqueid = ?
+      LIMIT 1
+    `, [uniqueid]);
+    
+    if (!results || results.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Звонок с таким ID не найден' 
+      });
+    }
+    
+    const call = results[0];
+    let recordingInfo = null;
+    
+    if (call.recordingfile) {
+      const callDate = new Date(call.calldate);
+      const year = callDate.getFullYear();
+      const month = String(callDate.getMonth() + 1).padStart(2, '0');
+      const day = String(callDate.getDate()).padStart(2, '0');
+      
+      const recordingsPath = process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor';
+      const filePath = path.join(recordingsPath, String(year), month, day, call.recordingfile);
+      
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        recordingInfo = {
+          filename: call.recordingfile,
+          size: stats.size,
+          sizeFormatted: (stats.size / 1024 / 1024).toFixed(2) + ' MB',
+          downloadUrl: `/api/recording/${uniqueid}`,
+          exists: true
+        };
+      } else {
+        recordingInfo = {
+          filename: call.recordingfile,
+          exists: false,
+          error: 'Файл не найден на сервере'
+        };
+      }
+    }
+    
+    res.json({
+      success: true,
+      call: {
+        uniqueid: call.uniqueid,
+        calldate: call.calldate,
+        from: call.src,
+        to: call.dst,
+        duration: call.duration,
+        billsec: call.billsec,
+        status: call.disposition,
+        channel: call.channel,
+        dstchannel: call.dstchannel
+      },
+      recording: recordingInfo
+    });
+    
+  } catch (error) {
+    logger.error('[Recording Info API] Ошибка:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 module.exports = { router, init };

@@ -83,249 +83,9 @@ class ChartManager {
 // Глобальный менеджер графиков
 const chartManager = new ChartManager();
 
-// Система уведомлений
-class NotificationManager {
-  constructor() {
-    this.container = document.getElementById('toast-container');
-    this.toasts = [];
-  }
-
-  show(message, type = 'info', duration = 5000) {
-    const id = Date.now();
-    const toast = this.createToast(id, message, type);
-
-    this.container.appendChild(toast);
-    this.toasts.push({ id, element: toast });
-
-    // Показываем уведомление
-    setTimeout(() => {
-      toast.classList.add('show');
-    }, 10);
-
-    // Автоматически скрываем через указанное время
-    if (duration > 0) {
-      setTimeout(() => {
-        this.hide(id);
-      }, duration);
-    }
-
-    return id;
-  }
-
-  createToast(id, message, type) {
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.setAttribute('role', 'alert');
-    toast.setAttribute('aria-live', 'assertive');
-    toast.setAttribute('aria-atomic', 'true');
-
-    const header = document.createElement('div');
-    header.className = 'toast-header';
-
-    const title = document.createElement('strong');
-    title.className = 'me-auto';
-    title.textContent = this.getTitle(type);
-
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'btn-close';
-    closeBtn.setAttribute('aria-label', 'Закрыть');
-    closeBtn.innerHTML = '×';
-    closeBtn.onclick = () => this.hide(id);
-
-    header.appendChild(title);
-    header.appendChild(closeBtn);
-
-    const body = document.createElement('div');
-    body.className = 'toast-body';
-    body.textContent = message;
-
-    toast.appendChild(header);
-    toast.appendChild(body);
-
-    return toast;
-  }
-
-  getTitle(type) {
-    const titles = {
-      success: 'Успех',
-      error: 'Ошибка',
-      warning: 'Предупреждение',
-      info: 'Информация'
-    };
-    return titles[type] || 'Уведомление';
-  }
-
-  hide(id) {
-    const toastData = this.toasts.find(t => t.id === id);
-    if (!toastData) return;
-
-    const toast = toastData.element;
-    toast.classList.add('hide');
-
-    // Удаляем из DOM после анимации
-    setTimeout(() => {
-      if (toast.parentNode) {
-        toast.parentNode.removeChild(toast);
-      }
-    }, 300);
-
-    // Удаляем из массива
-    this.toasts = this.toasts.filter(t => t.id !== id);
-  }
-
-  hideAll() {
-    this.toasts.forEach(toast => this.hide(toast.id));
-  }
-}
-
-// Используем модуль если загружен, иначе создаем локальный экземпляр
-if (!notificationManager) {
-  notificationManager = new NotificationManager();
-  window.notificationManager = notificationManager;
-}
-
-// Анимации и эффекты
-class AnimationManager {
-  constructor() {
-    this.init();
-  }
-
-  init() {
-    this.addIntersectionObserver();
-    this.addLoadingStates();
-  }
-
-  addIntersectionObserver() {
-    // Анимация появления элементов при скролле
-    const observerOptions = {
-      threshold: 0.1,
-      rootMargin: '0px 0px -50px 0px'
-    };
-
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('fade-in-up');
-          observer.unobserve(entry.target);
-        }
-      });
-    }, observerOptions);
-
-    // Наблюдаем за элементами, которые должны анимироваться
-    document.querySelectorAll('.stat-card, .chart-container, .table-responsive').forEach(el => {
-      observer.observe(el);
-    });
-  }
-
-  addLoadingStates() {
-    // Добавляем плавные переходы для всех интерактивных элементов
-    document.querySelectorAll('button, .btn, input, select').forEach(el => {
-      el.addEventListener('mousedown', () => {
-        el.style.transform = 'scale(0.98)';
-      });
-
-      el.addEventListener('mouseup', () => {
-        el.style.transform = '';
-      });
-
-      el.addEventListener('mouseleave', () => {
-        el.style.transform = '';
-      });
-    });
-  }
-
-  showSkeletonLoader(container, type = 'cards') {
-    container.innerHTML = '';
-
-    if (type === 'cards') {
-      for (let i = 0; i < 4; i++) {
-        const skeletonCard = document.createElement('div');
-        skeletonCard.className = 'stat-card skeleton-card skeleton';
-        container.appendChild(skeletonCard);
-      }
-    } else if (type === 'table') {
-      for (let i = 0; i < 5; i++) {
-        const skeletonRow = document.createElement('div');
-        skeletonRow.className = 'skeleton-table-row skeleton';
-        container.appendChild(skeletonRow);
-      }
-    }
-  }
-
-  hideSkeletonLoader(container) {
-    // Заменяем skeleton на реальный контент с анимацией
-    container.style.opacity = '0';
-    setTimeout(() => {
-      container.style.transition = 'opacity 0.3s ease';
-      container.style.opacity = '1';
-    }, 100);
-  }
-
-  animateElement(element, animation = 'bounce') {
-    element.classList.add(animation);
-    setTimeout(() => {
-      element.classList.remove(animation);
-    }, 1000);
-  }
-
-  animateCounters() {
-    // Анимируем счетчики в карточках статистики
-    const counters = document.querySelectorAll('.stat-value[data-counter]');
-    counters.forEach(counter => {
-      const target = parseInt(counter.getAttribute('data-counter'));
-      if (isNaN(target)) return;
-
-      this.animateCounter(counter, 0, target, 1000);
-    });
-  }
-
-  animateCounter(element, start, end, duration) {
-    const startTime = performance.now();
-
-    const updateCounter = (currentTime) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-
-      // Используем easeOut функцию для плавной анимации
-      const easeOut = 1 - Math.pow(1 - progress, 3);
-      const current = Math.floor(start + (end - start) * easeOut);
-
-      element.textContent = current.toLocaleString();
-
-      if (progress < 1) {
-        requestAnimationFrame(updateCounter);
-      }
-    };
-
-    requestAnimationFrame(updateCounter);
-  }
-
-  createRippleEffect(event) {
-    const button = event.currentTarget;
-    const circle = document.createElement('span');
-    const diameter = Math.max(button.clientWidth, button.clientHeight);
-    const radius = diameter / 2;
-
-    circle.style.width = circle.style.height = `${diameter}px`;
-    circle.style.left = `${event.clientX - button.offsetLeft - radius}px`;
-    circle.style.top = `${event.clientY - button.offsetTop - radius}px`;
-    circle.classList.add('ripple-effect');
-
-    const ripple = button.getElementsByClassName('ripple-effect')[0];
-    if (ripple) {
-      ripple.remove();
-    }
-
-    button.appendChild(circle);
-  }
-}
-
-// Используем модуль если загружен, иначе создаем локальный экземпляр
-if (!animationManager) {
-  animationManager = new AnimationManager();
-  window.animationManager = animationManager;
-}
+// NotificationManager и AnimationManager загружаются из модулей:
+// - /js/modules/notification-manager.js
+// - /js/modules/animation-manager.js
 
 // Функция для отображения загрузочного состояния
 function showLoadingState(form) {
@@ -349,7 +109,7 @@ function initializeFormHandler() {
 
   form.addEventListener('submit', function(e) {
     const restoreButton = showLoadingState(this);
-    notificationManager.show('Формирование отчета...', 'info', 2000);
+    notificationManager?.show('Формирование отчета...', 'info', 2000);
   });
 }
 
@@ -388,13 +148,13 @@ function exportToCSV() {
   try {
     const chartDataElement = document.getElementById('chart-data');
     if (!chartDataElement) {
-      notificationManager.show('Нет данных для экспорта', 'warning');
+      notificationManager?.show('Нет данных для экспорта', 'warning');
       return;
     }
 
     const data = JSON.parse(chartDataElement.dataset.chart);
     if (!data.calls || data.calls.length === 0) {
-      notificationManager.show('Нет данных для экспорта', 'warning');
+      notificationManager?.show('Нет данных для экспорта', 'warning');
       return;
     }
 
@@ -441,7 +201,7 @@ function exportToCSV() {
     ].join('\n');
 
     downloadFile(csvContent, 'asterisk-report.csv', 'text/csv');
-    notificationManager.show('Данные успешно экспортированы в CSV', 'success');
+    notificationManager?.show('Данные успешно экспортированы в CSV', 'success');
   } catch (error) {
     console.error('Ошибка экспорта CSV:', error);
     alert('Ошибка при экспорте CSV');
@@ -452,7 +212,7 @@ function exportToJSON() {
   try {
     const chartDataElement = document.getElementById('chart-data');
     if (!chartDataElement) {
-      notificationManager.show('Нет данных для экспорта', 'warning');
+      notificationManager?.show('Нет данных для экспорта', 'warning');
       return;
     }
 
@@ -460,7 +220,7 @@ function exportToJSON() {
     const jsonContent = JSON.stringify(data, null, 2);
 
     downloadFile(jsonContent, 'asterisk-report.json', 'application/json');
-    notificationManager.show('Данные успешно экспортированы в JSON', 'success');
+    notificationManager?.show('Данные успешно экспортированы в JSON', 'success');
   } catch (error) {
     console.error('Ошибка экспорта JSON:', error);
     alert('Ошибка при экспорте JSON');
@@ -482,7 +242,7 @@ function downloadFile(content, filename, mimeType) {
   // Анимируем кнопку экспорта
   const exportButtons = document.querySelectorAll('#export-csv, #export-json');
   exportButtons.forEach(btn => {
-    animationManager.animateElement(btn, 'bounce');
+    animationManager?.animateElement(btn, 'bounce');
   });
 
   document.body.removeChild(a);
@@ -792,33 +552,11 @@ class CallsTableManager {
       return;
     }
 
-    // Показываем skeleton loading на короткое время для плавности
-    const wasEmpty = this.tableBody.children.length === 0;
-    if (wasEmpty && pageData.length > 0) {
-      animationManager.showSkeletonLoader(this.tableBody, 'table');
-      setTimeout(() => {
-        this.tableBody.innerHTML = pageData.map(call => this.createTableRow(call)).join('');
-
-        // Инициализация audio элементов после создания таблицы
-        this.initializeAudioPlayers();
-
-        // Добавляем анимацию появления
-        Array.from(this.tableBody.children).forEach((row, index) => {
-          row.style.opacity = '0';
-          row.style.transform = 'translateY(10px)';
-          setTimeout(() => {
-            row.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-            row.style.opacity = '1';
-            row.style.transform = 'translateY(0)';
-          }, index * 50);
-        });
-      }, 200);
-    } else {
-      this.tableBody.innerHTML = pageData.map(call => this.createTableRow(call)).join('');
-
-      // Инициализация audio элементов после создания таблицы
-      this.initializeAudioPlayers();
-    }
+    // Рендерим таблицу
+    this.tableBody.innerHTML = pageData.map(call => this.createTableRow(call)).join('');
+    
+    // Инициализация audio элементов после создания таблицы
+    this.initializeAudioPlayers();
 
     this.renderPagination();
     this.updateInfo();
@@ -1363,7 +1101,7 @@ class UIManager {
   toggleCompactMode() {
     const newMode = !this.compactMode;
     this.applyCompactMode(newMode);
-    notificationManager.show(
+    notificationManager?.show(
       `Вид переключен на ${newMode ? 'компактный' : 'обычный'}`,
       'info',
       1500
@@ -1424,7 +1162,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Анимируем счетчики статистики после небольшой задержки
   setTimeout(() => {
-    animationManager.animateCounters();
+    animationManager?.animateCounters();
   }, 500);
 
   // Проверяем, есть ли данные для графика
@@ -1660,7 +1398,7 @@ function playRecording(filename) {
   audio.play().catch(err => {
     console.error('Error playing recording:', err);
     if (typeof notificationManager !== 'undefined') {
-      notificationManager.show('Ошибка воспроизведения записи', 'error');
+      notificationManager?.show('Ошибка воспроизведения записи', 'error');
     }
   });
 
@@ -1672,7 +1410,7 @@ function playRecording(filename) {
   audio.addEventListener('error', (e) => {
     console.error('Audio playback error:', e);
     if (typeof notificationManager !== 'undefined') {
-      notificationManager.show('Ошибка загрузки записи', 'error');
+      notificationManager?.show('Ошибка загрузки записи', 'error');
     }
   });
 }

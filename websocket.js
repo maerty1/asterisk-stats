@@ -166,15 +166,21 @@ async function getSystemStatus() {
     await dbExecute('SELECT 1');
     const dbLatency = Date.now() - start;
     
-    // Получаем общую статистику за сегодня
-    const today = new Date().toISOString().slice(0, 10);
-    const [todayStats] = await dbExecute(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN event = 'CONNECT' THEN 1 ELSE 0 END) as answered
-      FROM queuelog
-      WHERE DATE(time) = ?
-    `, [today]);
+    // Получаем общую статистику за сегодня из cdr (таблица в asteriskcdrdb)
+    let todayStats = { total: 0, answered: 0 };
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const [stats] = await dbExecute(`
+        SELECT 
+          COUNT(*) as total,
+          SUM(CASE WHEN disposition = 'ANSWERED' THEN 1 ELSE 0 END) as answered
+        FROM asteriskcdrdb.cdr
+        WHERE DATE(calldate) = ?
+      `, [today]);
+      todayStats = stats || { total: 0, answered: 0 };
+    } catch (statsError) {
+      // Если таблица cdr недоступна, просто используем нули (не спамим в логи)
+    }
     
     return {
       status: 'healthy',
