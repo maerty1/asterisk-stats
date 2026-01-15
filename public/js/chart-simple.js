@@ -433,13 +433,26 @@ class CallsTableManager {
       return mins > 0 ? `${mins} мин ${secs} сек` : `${secs} сек`;
     };
 
+    const formatPhoneNumber = (number) => {
+      if (!number || number === '-') return number || '-';
+      const num = number.toString().trim();
+      // Убираем префиксы +7 или 7 в начале
+      if (num.startsWith('+7')) {
+        return num.substring(2);
+      }
+      if (num.startsWith('7') && num.length > 10) {
+        return num.substring(1);
+      }
+      return num;
+    };
+
     const statusText = call.status === 'abandoned' ? 'Пропущен' : 'Принят';
     const statusClass = call.status === 'abandoned' ? 'status-error' : 'status-success';
 
     return `
       <tr>
         <td>${formatDateTime(call.startTime)}</td>
-        <td>${call.clientNumber || '-'}</td>
+        <td>${formatPhoneNumber(call.clientNumber) || '-'}</td>
         <td>${call.waitTime || 0} сек</td>
         <td>${formatDuration(call.duration)}</td>
         <td><span class="badge ${statusClass}">${statusText}</span></td>

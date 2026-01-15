@@ -5,6 +5,7 @@
 
 const { format } = require('date-fns');
 const { execute: dbExecute } = require('./db-optimizer');
+const logger = require('./logger');
 
 /**
  * Проверка перезвонов для пропущенных звонков в очереди
@@ -268,7 +269,7 @@ async function checkCallbacksBatch(conn, calls, queueName) {
     });
 
   } catch (error) {
-    console.error('[checkCallbacksBatch] Ошибка при batch-проверке перезвонов:', error);
+    logger.error('[checkCallbacksBatch] Ошибка при batch-проверке перезвонов:', error);
     // В случае ошибки возвращаем "Не обработан" для всех
     return calls.map(() => ({
       type: 'no_callback',
@@ -470,7 +471,7 @@ async function checkCallbacksBatchInbound(conn, calls) {
     });
 
   } catch (error) {
-    console.error('[checkCallbacksBatchInbound] Ошибка при batch-проверке перезвонов:', error);
+    logger.error('[checkCallbacksBatchInbound] Ошибка при batch-проверке перезвонов:', error);
     // В случае ошибки возвращаем "Не обработан" для всех
     return calls.map(() => ({
       type: 'no_callback',

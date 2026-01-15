@@ -1,0 +1,140 @@
+{
+  "app": {
+    "title": "Call Analytics",
+    "subtitle": "Monitoring Dashboard"
+  },
+  "nav": {
+    "analytics": "Analytics",
+    "rankings": "Rankings",
+    "settings": "Settings",
+    "export": "Export"
+  },
+  "filters": {
+    "queue": "Queue",
+    "startDate": "Start Date",
+    "endDate": "End Date",
+    "analyze": "Analyze",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "week": "Week",
+    "month": "Month"
+  },
+  "viewTypes": {
+    "queue": "Inbound Queue",
+    "outboundQueue": "Outbound Queues",
+    "inbound": "Inbound",
+    "outbound": "Outbound"
+  },
+  "stats": {
+    "totalCalls": "Total Calls",
+    "answered": "Answered",
+    "abandoned": "Abandoned",
+    "answerRate": "Answer Rate",
+    "sla": "SLA (20 sec)",
+    "asa": "Average Speed of Answer",
+    "avgDuration": "Average Duration",
+    "abandonRate": "Abandon Rate"
+  },
+  "callbacks": {
+    "title": "Callbacks",
+    "clientCallback": "Client Called Back",
+    "agentCallback": "Agent Called Back",
+    "notProcessed": "Not Processed",
+    "processed": "Processed"
+  },
+  "table": {
+    "date": "Date",
+    "client": "Client",
+    "agent": "Agent",
+    "duration": "Duration",
+    "waitTime": "Wait Time",
+    "status": "Status",
+    "search": "Search by number, status...",
+    "show": "Show",
+    "detailedLog": "Detailed Call Log",
+    "noData": "No data"
+  },
+  "chart": {
+    "hourlyDistribution": "Hourly Distribution",
+    "calls": "Calls",
+    "answered": "Answered"
+  },
+  "rankings": {
+    "title": "Queue Rankings",
+    "rank": "Rank",
+    "queueName": "Queue",
+    "department": "Department",
+    "totalCalls": "Calls",
+    "answerRate": "Answer",
+    "sla": "SLA",
+    "notProcessed": "Not Processed",
+    "asa": "ASA",
+    "compositeScore": "Score",
+    "loading": "Loading rankings...",
+    "exportExcel": "Export to Excel"
+  },
+  "comparison": {
+    "title": "Period Comparison",
+    "weekToWeek": "Week over Week",
+    "monthToMonth": "Month over Month",
+    "custom": "Custom",
+    "currentPeriod": "Current Period",
+    "previousPeriod": "Previous Period",
+    "change": "Change",
+    "improved": "Improved",
+    "declined": "Declined",
+    "noChange": "No Change"
+  },
+  "settings": {
+    "title": "Settings",
+    "database": "Database",
+    "email": "Email",
+    "workingHours": "Working Hours",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "save": "Save",
+    "cancel": "Cancel",
+    "saved": "Settings saved",
+    "restarting": "Application restarting..."
+  },
+  "email": {
+    "title": "Email Reports",
+    "addEmail": "Add email",
+    "recipients": "Recipients",
+    "active": "Active",
+    "sendTest": "Send Test",
+    "dailyReport": "Daily Report"
+  },
+  "status": {
+    "checking": "Checking...",
+    "online": "Online",
+    "offline": "Offline",
+    "loading": "Loading...",
+    "error": "Error"
+  },
+  "common": {
+    "yes": "Yes",
+    "no": "No",
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "all": "All",
+    "none": "None",
+    "seconds": "sec",
+    "minutes": "min",
+    "hours": "h"
+  },
+  "errors": {
+    "generic": "An error occurred",
+    "network": "Network error",
+    "notFound": "Not found",
+    "validation": "Validation error",
+    "serverError": "Server error"
+  }
+}

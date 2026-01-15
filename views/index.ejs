@@ -6,8 +6,6 @@
   <meta name="description" content="Аналитика звонков - Панель мониторинга Asterisk PBX">
   <title>Аналитика звонков</title>
   <link rel="stylesheet" href="/css/style.css?v=<%= Date.now() %>">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <script src="/js/status-monitor.js?v=<%= Date.now() %>" defer></script>
   <script src="/js/call-center-stats.js?v=<%= Date.now() %>" defer></script>
 </head>
@@ -84,7 +82,7 @@
             </div>
           </div>
           
-          <div class="form-row" style="grid-template-columns: 2fr 1.5fr auto;">
+          <div class="form-row" style="grid-template-columns: 2fr 1fr 1fr auto;">
             <div class="form-group">
               <label for="queue_name">Очередь</label>
               <select id="queue_name" name="queue_name" <%= (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') ? 'required' : '' %> <%= typeof viewType !== 'undefined' && (viewType === 'inbound' || viewType === 'outbound') ? 'disabled' : '' %>>
@@ -99,10 +97,13 @@
             </div>
             
             <div class="form-group">
-              <label for="date_range">Период</label>
-              <input type="text" id="date_range" placeholder="Выберите период" style="cursor: pointer;" readonly>
-              <input type="hidden" id="start_date" name="start_date" value="<%= startDate %>">
-              <input type="hidden" id="end_date" name="end_date" value="<%= endDate %>">
+              <label for="start_date">Начало периода</label>
+              <input type="date" id="start_date" name="start_date" value="<%= startDate %>" class="form-input" required>
+            </div>
+            
+            <div class="form-group">
+              <label for="end_date">Конец периода</label>
+              <input type="date" id="end_date" name="end_date" value="<%= endDate %>" class="form-input" required>
             </div>
             
             <div class="form-group" style="align-self: flex-end;">
@@ -116,6 +117,23 @@
     </header>
 
     <main>
+      <!-- Loading state -->
+      <div id="loading-message" class="loading-state" style="display: none;">
+        <div class="spinner"></div>
+        <p class="loading-text">Загрузка данных...</p>
+      </div>
+
+      <!-- Error state -->
+      <div id="error-message" class="card" style="display: none; border-color: var(--accent-error);">
+        <div class="empty-state">
+          <div class="empty-state-icon">❌</div>
+          <h3 class="empty-state-title">Ошибка</h3>
+          <p class="empty-state-description" id="error-text"></p>
+        </div>
+      </div>
+
+      <!-- Results container -->
+      <div id="results-container">
       <% if (!results) { %>
         <div class="empty-state">
           <div class="empty-state-icon">📊</div>
@@ -470,6 +488,29 @@
                   </div>
                 </div>
 
+                <!-- Working Hours Settings -->
+                <div>
+                  <h3 style="margin: 0 0 var(--md-spacing-md) 0; font-size: 1rem; font-weight: 600; color: var(--md-sys-color-on-surface);">⏰ Рабочие часы</h3>
+                  <p style="margin: 0 0 var(--md-spacing-md) 0; font-size: 0.85rem; color: var(--text-tertiary);">Звонки вне рабочих часов не будут учитываться в статистике</p>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--md-spacing-md);">
+                    <div>
+                      <label class="form-label">Начало рабочего дня</label>
+                      <input type="time" class="form-input" id="setting-WORK_HOURS_START" value="07:00">
+                    </div>
+                    <div>
+                      <label class="form-label">Конец рабочего дня</label>
+                      <input type="time" class="form-input" id="setting-WORK_HOURS_END" value="23:59">
+                    </div>
+                    <div>
+                      <label class="form-label">Фильтр по часам</label>
+                      <select class="form-input" id="setting-WORK_HOURS_ENABLED">
+                        <option value="true">Включён</option>
+                        <option value="false">Выключен</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- Other Settings -->
                 <div>
                   <h3 style="margin: 0 0 var(--md-spacing-md) 0; font-size: 1rem; font-weight: 600; color: var(--md-sys-color-on-surface);">Прочие настройки</h3>
@@ -533,6 +574,7 @@
         <div id="calls-data" data-calls='<%- JSON.stringify(results.calls).replace(/'/g, '&#39;') %>' style="display: none;"></div>
         <div id="hourly-data" data-hourly='<%- JSON.stringify(results.stats.callsByHour).replace(/'/g, '&#39;') %>' style="display: none;"></div>
       <% } %>
+      </div>
   </main>
     </div>
 
@@ -789,111 +831,6 @@
           }
         } catch (error) {
           console.error('Ошибка загрузки настроек:', error);
-          showToast('❌ Ошибка загрузки настроек', 'error');
-        } finally {
-          settingsLoading.style.display = 'none';
-          settingsForm.style.display = 'block';
-        }
-      });
-      
-      // Закрытие модального окна
-      function closeSettingsModal() {
-        settingsModal.style.display = 'none';
-        document.body.style.overflow = '';
-      }
-      
-      closeSettingsModal.addEventListener('click', closeSettingsModal);
-      settingsModalOverlay.addEventListener('click', closeSettingsModal);
-      settingsCancelBtn.addEventListener('click', closeSettingsModal);
-      
-      // Закрытие по Escape
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && settingsModal.style.display === 'flex') {
-          closeSettingsModal();
-        }
-      });
-      
-      // Сохранение настроек
-      settingsSaveBtn.addEventListener('click', async () => {
-        try {
-          settingsSaveBtn.disabled = true;
-          settingsSaveBtn.innerHTML = '⏳ Сохранение...';
-          
-          // Собираем все настройки из формы
-          const settings = {};
-          const inputs = settingsForm.querySelectorAll('[id^="setting-"]');
-          inputs.forEach(input => {
-            const key = input.id.replace('setting-', '');
-            settings[key] = input.value.trim();
-          });
-          
-          const response = await fetch('/api/settings', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ settings })
-          });
-          
-          const data = await response.json();
-          
-          if (data.success) {
-            showToast('✅ Настройки успешно сохранены. Перезапустите приложение для применения изменений.', 'success');
-            setTimeout(() => {
-              closeSettingsModal();
-            }, 1500);
-          } else {
-            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
-          }
-        } catch (error) {
-          console.error('Ошибка сохранения настроек:', error);
-          alert('Ошибка при сохранении настроек');
-        } finally {
-          settingsSaveBtn.disabled = false;
-          settingsSaveBtn.innerHTML = '💾 Сохранить настройки';
-        }
-      });
-    })();
-  </script>
-  
-  <!-- Settings Management Modal Script -->
-  <script>
-    (function() {
-      const settingsModal = document.getElementById('settings-modal');
-      const settingsModalOverlay = document.getElementById('settings-modal-overlay');
-      const closeSettingsModal = document.getElementById('close-settings-modal');
-      const openSettingsModalBtn = document.getElementById('open-settings-modal-btn');
-      const settingsForm = document.getElementById('settings-form');
-      const settingsLoading = document.getElementById('settings-loading');
-      const settingsSaveBtn = document.getElementById('settings-save-btn');
-      const settingsCancelBtn = document.getElementById('settings-cancel-btn');
-      
-      if (!settingsModal || !openSettingsModalBtn) {
-        return;
-      }
-      
-      // Открытие модального окна
-      openSettingsModalBtn.addEventListener('click', async () => {
-        settingsModal.style.display = 'flex';
-        document.body.style.overflow = 'hidden';
-        settingsForm.style.display = 'none';
-        settingsLoading.style.display = 'block';
-        
-        try {
-          const response = await fetch('/api/settings');
-          const data = await response.json();
-          
-          if (data.success && data.settings) {
-            // Заполняем форму значениями
-            Object.keys(data.settings).forEach(key => {
-              const input = document.getElementById(`setting-${key}`);
-              if (input) {
-                input.value = data.settings[key] || '';
-              }
-            });
-          }
-        } catch (error) {
-          console.error('Ошибка загрузки настроек:', error);
           if (typeof showToast === 'function') {
             showToast('❌ Ошибка загрузки настроек', 'error');
           } else {
@@ -1028,58 +965,32 @@ document.addEventListener('DOMContentLoaded', function() {
       const queueSelect = document.getElementById('queue_name');
       const startDateInput = document.getElementById('start_date');
       const endDateInput = document.getElementById('end_date');
-      const dateRangeInput = document.getElementById('date_range');
-      
-      // Инициализация Flatpickr для выбора диапазона дат
-      let flatpickrInstance = null;
-      if (dateRangeInput) {
-        const startDate = startDateInput ? startDateInput.value : '';
-        const endDate = endDateInput ? endDateInput.value : '';
-        
-        flatpickrInstance = flatpickr(dateRangeInput, {
-          mode: "range",
-          dateFormat: "d.m.Y",
-          locale: {
-            firstDayOfWeek: 1,
-            weekdays: { shorthand: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"], longhand: ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"] },
-            months: { shorthand: ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"], longhand: ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"] }
-          },
-          defaultDate: startDate && endDate ? [startDate, endDate] : null,
-          onChange: function(selectedDates, dateStr, instance) {
-            if (selectedDates.length === 2) {
-              const start = selectedDates[0];
-              const end = selectedDates[1];
-              const startFormatted = start.getFullYear() + '-' + 
-                String(start.getMonth() + 1).padStart(2, '0') + '-' + 
-                String(start.getDate()).padStart(2, '0');
-              const endFormatted = end.getFullYear() + '-' + 
-                String(end.getMonth() + 1).padStart(2, '0') + '-' + 
-                String(end.getDate()).padStart(2, '0');
-              
-              if (startDateInput) startDateInput.value = startFormatted;
-              if (endDateInput) endDateInput.value = endFormatted;
-              
-              saveFilters();
-            } else if (selectedDates.length === 0) {
-              if (startDateInput) startDateInput.value = '';
-              if (endDateInput) endDateInput.value = '';
-            }
-          }
-        });
-      }
       
       // Функция сохранения значений фильтров
       function saveFilters() {
+        // Сохраняем даты в sessionStorage для синхронизации между страницами
+        if (startDateInput && endDateInput) {
+          const dateRange = {
+            startDate: startDateInput.value || '',
+            endDate: endDateInput.value || ''
+          };
+          sessionStorage.setItem('asteriskStatsDateRange', JSON.stringify(dateRange));
+        }
+        
+        // Сохраняем очередь в localStorage (специфична для страницы аналитики)
         const filters = {
-          startDate: startDateInput ? startDateInput.value : '',
-          endDate: endDateInput ? endDateInput.value : '',
           queue: queueSelect ? queueSelect.value : ''
         };
         localStorage.setItem('asteriskStatsFilters', JSON.stringify(filters));
-        return filters;
+        
+        return {
+          startDate: startDateInput ? startDateInput.value : '',
+          endDate: endDateInput ? endDateInput.value : '',
+          queue: filters.queue
+        };
       }
       
-      // Функция восстановления значений фильтров из localStorage
+      // Функция восстановления значений фильтров
       // Используется только если значения не установлены сервером (из URL)
       function restoreFilters() {
         try {
@@ -1087,22 +998,35 @@ document.addEventListener('DOMContentLoaded', function() {
           const urlParams = new URLSearchParams(window.location.search);
           const hasUrlParams = urlParams.has('start_date') || urlParams.has('end_date') || urlParams.has('queue_name');
           
-          // Если в URL нет параметров, восстанавливаем из localStorage
+          // Восстанавливаем даты из sessionStorage (приоритет: URL > sessionStorage > серверные значения)
+          const hasServerDates = (startDateInput && startDateInput.value) || (endDateInput && endDateInput.value);
+          
+          if (!hasUrlParams && !hasServerDates) {
+            // Восстанавливаем даты из sessionStorage
+            const savedDates = sessionStorage.getItem('asteriskStatsDateRange');
+            if (savedDates) {
+              try {
+                const dateRange = JSON.parse(savedDates);
+                if (startDateInput && dateRange.startDate && !startDateInput.value) {
+                  startDateInput.value = dateRange.startDate;
+                }
+                if (endDateInput && dateRange.endDate && !endDateInput.value) {
+                  endDateInput.value = dateRange.endDate;
+                }
+              } catch (e) {
+                console.error('Ошибка при парсинге дат из sessionStorage:', e);
+              }
+            }
+          } else if (hasServerDates || hasUrlParams) {
+            // Если даты есть (от сервера или из URL), сохраняем их в sessionStorage
+            saveFilters();
+          }
+          
+          // Восстанавливаем очередь из localStorage (если нет параметров в URL)
           if (!hasUrlParams) {
             const saved = localStorage.getItem('asteriskStatsFilters');
             if (saved) {
               const filters = JSON.parse(saved);
-              if (startDateInput && filters.startDate && !startDateInput.value) {
-                startDateInput.value = filters.startDate;
-              }
-              if (endDateInput && filters.endDate && !endDateInput.value) {
-                endDateInput.value = filters.endDate;
-              }
-              
-              // Обновляем flatpickr после восстановления
-              if (flatpickrInstance && filters.startDate && filters.endDate) {
-                flatpickrInstance.setDate([filters.startDate, filters.endDate], false);
-              }
               // Очередь восстанавливаем всегда, если она есть в сохраненных фильтрах
               // и если мы в представлении очередей (поле не disabled)
               if (queueSelect && filters.queue) {
@@ -1112,27 +1036,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
               }
             }
-      } else {
-            // Если есть параметры в URL, сохраняем их в localStorage
+          } else {
+            // Если есть параметры в URL, сохраняем очередь в localStorage
             const filters = {
-              startDate: startDateInput ? startDateInput.value : '',
-              endDate: endDateInput ? endDateInput.value : '',
               queue: queueSelect ? queueSelect.value : ''
             };
             localStorage.setItem('asteriskStatsFilters', JSON.stringify(filters));
-      }
+            // Даты уже сохранены выше через saveFilters()
+          }
         } catch (e) {
           console.error('Ошибка при восстановлении фильтров:', e);
-    }
+        }
       }
       
       // Восстанавливаем фильтры при загрузке страницы
       restoreFilters();
-      
-      // Обновляем flatpickr после восстановления фильтров
-      if (flatpickrInstance && startDateInput && endDateInput && startDateInput.value && endDateInput.value) {
-        flatpickrInstance.setDate([startDateInput.value, endDateInput.value], false);
-      }
       
       // Автоматическая отправка формы при загрузке, если есть параметры в URL
       const urlParams = new URLSearchParams(window.location.search);
@@ -1149,13 +1067,41 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       // Сохраняем фильтры при изменении значений
-      // (для date range это уже обрабатывается в onChange flatpickr)
       if (queueSelect) {
         queueSelect.addEventListener('change', saveFilters);
       }
+      if (startDateInput) {
+        startDateInput.addEventListener('change', saveFilters);
+      }
+      if (endDateInput) {
+        endDateInput.addEventListener('change', saveFilters);
+      }
+      
+      // Обработка отправки формы с показом индикатора загрузки
+      const form = document.querySelector('form[action="/report"]');
+      const loadingMessage = document.getElementById('loading-message');
+      const errorMessage = document.getElementById('error-message');
+      const resultsContainer = document.getElementById('results-container');
+      
+      if (form) {
+        form.addEventListener('submit', function(e) {
+          // Сохраняем фильтры
+          saveFilters();
+          
+          // Показываем индикатор загрузки
+          if (loadingMessage) {
+            loadingMessage.style.display = 'flex';
+          }
+          if (errorMessage) {
+            errorMessage.style.display = 'none';
+          }
+          if (resultsContainer) {
+            resultsContainer.style.display = 'none';
+          }
+        });
+      }
       
       // Обработка переключения типа представления
-      const form = document.querySelector('form[action="/report"]');
       viewSelectorBtns.forEach(btn => {
         btn.addEventListener('click', function(e) {
           const viewType = this.getAttribute('data-view');
@@ -1181,11 +1127,6 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           if (endDateInput && filters.endDate) {
             endDateInput.value = filters.endDate;
-          }
-          
-          // Обновляем flatpickr
-          if (flatpickrInstance && filters.startDate && filters.endDate) {
-            flatpickrInstance.setDate([filters.startDate, filters.endDate], false);
           }
           
           // Управляем состоянием поля очереди
@@ -1297,11 +1238,6 @@ document.addEventListener('DOMContentLoaded', function() {
           
           if (startDateInput) startDateInput.value = startDate;
           if (endDateInput) endDateInput.value = endDate;
-          
-          // Обновляем flatpickr
-          if (flatpickrInstance && startDate && endDate) {
-            flatpickrInstance.setDate([startDate, endDate], false);
-          }
           
           // Обновляем активную кнопку
           quickFilterBtns.forEach(b => b.classList.remove('active'));

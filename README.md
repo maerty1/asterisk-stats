@@ -4,12 +4,14 @@
 
 **Профессиональное веб-приложение для анализа статистики очередей Asterisk**
 
-[![Version](https://img.shields.io/badge/version-1.0.0-4f46e5?style=for-the-badge)](https://github.com/maerty1/asterisk-stats)
+[![Version](https://img.shields.io/badge/version-1.1.0-4f46e5?style=for-the-badge)](https://github.com/maerty1/asterisk-stats)
 [![License](https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge)](LICENSE)
-[![Node](https://img.shields.io/badge/node-14%2B-339933?style=for-the-badge&logo=node.js)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/node-16%2B-339933?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![MySQL](https://img.shields.io/badge/mysql-8.0+-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://www.mysql.com/)
+[![Docker](https://img.shields.io/badge/docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Swagger](https://img.shields.io/badge/swagger-docs-85EA2D?style=for-the-badge&logo=swagger&logoColor=black)](http://localhost:3000/api/docs/)
 
-[Документация](#-документация) • [Установка](#-быстрая-установка) • [Возможности](#-основные-возможности) • [Примеры](#-примеры-использования)
+[Документация](#-документация) • [Установка](#-быстрая-установка) • [API](#-api-документация) • [Docker](#-docker) • [Мониторинг](#-мониторинг)
 
 </div>
 
@@ -34,6 +36,10 @@
 - 📧 **Автоматические отчеты** — ежедневная отправка статистики на email
 - 🚀 **Высокая производительность** — оптимизированные запросы к базе данных
 - 🎨 **Современный интерфейс** — темная тема в стиле Linear/Raycast
+- 📖 **Swagger API** — полная документация REST API
+- 📊 **Prometheus метрики** — мониторинг производительности
+- 🐳 **Docker Ready** — контейнеризация из коробки
+- 🔄 **CI/CD** — GitHub Actions для автоматизации
 
 ---
 
@@ -169,24 +175,158 @@ RECORDINGS_PATH=/var/spool/asterisk/monitor
 
 ---
 
+## 📖 API Документация
+
+### Swagger UI
+
+Интерактивная документация API доступна по адресу:
+
+```
+http://localhost:3000/api/docs/
+```
+
+OpenAPI JSON спецификация:
+```
+http://localhost:3000/api/docs.json
+```
+
+### Основные эндпоинты
+
+| Метод | Эндпоинт | Описание |
+|-------|----------|----------|
+| `GET` | `/api/health` | Полная проверка состояния |
+| `GET` | `/api/health/live` | Liveness probe (Kubernetes) |
+| `GET` | `/api/health/ready` | Readiness probe (Kubernetes) |
+| `GET` | `/api/metrics` | Prometheus метрики |
+| `GET` | `/api/settings` | Получить настройки |
+| `POST` | `/api/settings` | Сохранить настройки |
+| `POST` | `/rankings` | Получить рейтинг очередей |
+| `POST` | `/rankings/export-excel` | Экспорт рейтинга в Excel |
+
+### Пример запроса
+
+```bash
+# Получить рейтинг очередей
+curl -X POST http://localhost:3000/rankings \
+  -H "Content-Type: application/json" \
+  -d '{"start_date": "2026-01-01", "end_date": "2026-01-15"}'
+
+# Проверка здоровья
+curl http://localhost:3000/api/health
+```
+
+---
+
+## 🐳 Docker
+
+### Быстрый запуск
+
+```bash
+# Сборка и запуск
+docker-compose up -d
+
+# Только сборка образа
+docker build -t asterisk-stats .
+
+# Запуск контейнера
+docker run -d -p 3000:3000 --env-file .env asterisk-stats
+```
+
+### Docker Compose
+
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DB_HOST=db
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+    depends_on:
+      - db
+  db:
+    image: mariadb:10.6
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME}
+```
+
+---
+
+## 📊 Мониторинг
+
+### Prometheus метрики
+
+Метрики доступны по адресу: `http://localhost:3000/api/metrics`
+
+#### Доступные метрики
+
+| Метрика | Тип | Описание |
+|---------|-----|----------|
+| `asterisk_stats_http_requests_total` | Counter | HTTP запросы |
+| `asterisk_stats_http_request_duration_seconds` | Histogram | Время ответа |
+| `asterisk_stats_db_queries_total` | Counter | Запросы к БД |
+| `asterisk_stats_db_query_duration_seconds` | Histogram | Время запросов БД |
+| `asterisk_stats_active_queues` | Gauge | Активные очереди |
+| `asterisk_stats_calls_processed_total` | Counter | Обработанные звонки |
+| `asterisk_stats_emails_sent_total` | Counter | Отправленные email |
+
+#### Конфигурация Prometheus
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'asterisk-stats'
+    static_configs:
+      - targets: ['localhost:3000']
+    metrics_path: '/api/metrics'
+    scrape_interval: 15s
+```
+
+#### Health Checks
+
+```bash
+# Полная проверка (включая БД)
+curl http://localhost:3000/api/health
+
+# Liveness (приложение запущено)
+curl http://localhost:3000/api/health/live
+
+# Readiness (готово к работе)
+curl http://localhost:3000/api/health/ready
+```
+
+---
+
 ## 🏗️ Архитектура проекта
 
 ```
 asterisk-stats/
-├── 📁 app.js                    # Главный сервер (Express)
-├── 📁 db-optimizer.js           # Модуль оптимизации БД
-├── 📁 stats-calculator.js       # Расчет статистики
-├── 📁 callback-checker.js       # Проверка перезвонов
-├── 📁 queue-rankings.js         # Рейтинг очередей
-├── 📁 email-service.js          # Email-отчеты
+├── 📄 app.js                    # Главный сервер (Express)
+├── 📄 swagger.js                # Swagger/OpenAPI конфигурация
+├── 📄 metrics.js                # Prometheus метрики
+├── 📄 logger.js                 # Winston логгер
+├── 📁 routes/                   # API маршруты
+│   ├── health.js               # Health checks
+│   ├── rankings.js             # Рейтинг очередей
+│   ├── settings.js             # Настройки
+│   └── email-reports.js        # Email отчеты
 ├── 📁 views/                    # EJS шаблоны
 │   ├── index.ejs               # Главная страница
-│   └── rankings.ejs            # Страница рейтингов
+│   ├── rankings.ejs            # Страница рейтингов
+│   └── partials/               # Компоненты
 ├── 📁 public/                   # Статические файлы
-│   ├── css/style.css           # Темная тема (Linear/Raycast)
+│   ├── css/style.css           # Темная тема
 │   └── js/                     # Клиентский JavaScript
-└── 📁 db-adapters/              # Адаптеры БД
-    └── mysql2-adapter.js       # MySQL2 адаптер
+├── 📁 sql/                      # SQL скрипты
+├── 📁 db-adapters/              # Адаптеры БД
+├── 📁 .github/workflows/        # CI/CD
+├── 📄 Dockerfile                # Docker образ
+├── 📄 docker-compose.yml        # Docker Compose
+└── 📄 .env.example              # Пример конфигурации
 ```
 
 ---
@@ -215,19 +355,28 @@ asterisk-stats/
 </table>
 
 **Backend:**
-- Node.js 14+ / Express.js 4.x
+- Node.js 16+ / Express.js 4.x
 - MySQL2 с connection pooling
 - Nodemailer для email-отчетов
 - Node-cron для планирования задач
+- Winston для логирования
+- Swagger/OpenAPI для документации
 
 **Frontend:**
 - EJS шаблонизатор
 - Vanilla JavaScript (ES6+)
+- Chart.js для графиков
 - Современный CSS (темная тема)
-- Flatpickr для выбора дат
+
+**DevOps:**
+- Docker & Docker Compose
+- GitHub Actions CI/CD
+- Prometheus метрики
+- Health check endpoints
 
 **База данных:**
-- MySQL/MariaDB
+- MySQL/MariaDB (основная)
+- SQLite (настройки)
 - Таблицы: `cdr`, `queuelog`, `email_reports`
 
 ---

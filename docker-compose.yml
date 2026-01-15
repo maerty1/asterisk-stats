@@ -1,0 +1,77 @@
+# Asterisk Stats - Docker Compose
+# Используйте этот файл для локальной разработки или deployment
+
+version: '3.8'
+
+services:
+  # Основное приложение
+  asterisk-stats:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asterisk-stats
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=3000
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # База данных
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      - DB_USER=${DB_USER:-freepbxuser}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME:-asterisk}
+      - DB_CONNECTION_LIMIT=${DB_CONNECTION_LIMIT:-20}
+      # Email (опционально)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      # Настройки
+      - TIMEZONE=${TIMEZONE:-Europe/Moscow}
+      - OUTBOUND_MIN_LENGTH=${OUTBOUND_MIN_LENGTH:-4}
+      - WORK_HOURS_ENABLED=${WORK_HOURS_ENABLED:-false}
+      - WORK_HOURS_START=${WORK_HOURS_START:-07:00}
+      - WORK_HOURS_END=${WORK_HOURS_END:-23:59}
+    volumes:
+      # Persist settings database
+      - ./settings.db:/app/settings.db
+      # Persist logs
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - asterisk-net
+    # Для доступа к host MySQL используйте host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  asterisk-net:
+    driver: bridge
+
+# Примечание: Для production рекомендуется использовать внешний MySQL сервер
+# Если нужен MariaDB в Docker, добавьте этот сервис:
+#
+#   mariadb:
+#     image: mariadb:10.6
+#     container_name: asterisk-mariadb
+#     restart: unless-stopped
+#     environment:
+#       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+#       - MYSQL_DATABASE=asterisk
+#       - MYSQL_USER=${DB_USER}
+#       - MYSQL_PASSWORD=${DB_PASS}
+#     volumes:
+#       - mariadb_data:/var/lib/mysql
+#     networks:
+#       - asterisk-net
+#
+# volumes:
+#   mariadb_data:

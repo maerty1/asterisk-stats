@@ -1,0 +1,140 @@
+{
+  "app": {
+    "title": "Аналитика звонков",
+    "subtitle": "Панель мониторинга"
+  },
+  "nav": {
+    "analytics": "Аналитика",
+    "rankings": "Рейтинг",
+    "settings": "Настройки",
+    "export": "Экспорт"
+  },
+  "filters": {
+    "queue": "Очередь",
+    "startDate": "Начало периода",
+    "endDate": "Конец периода",
+    "analyze": "Анализ",
+    "today": "Сегодня",
+    "yesterday": "Вчера",
+    "week": "Неделя",
+    "month": "Месяц"
+  },
+  "viewTypes": {
+    "queue": "Вх очередь",
+    "outboundQueue": "Исх очереди",
+    "inbound": "Входящие",
+    "outbound": "Исходящие"
+  },
+  "stats": {
+    "totalCalls": "Всего звонков",
+    "answered": "Отвечено",
+    "abandoned": "Пропущено",
+    "answerRate": "Процент ответа",
+    "sla": "SLA (20 сек)",
+    "asa": "Среднее время ответа",
+    "avgDuration": "Средняя длительность",
+    "abandonRate": "Процент пропущенных"
+  },
+  "callbacks": {
+    "title": "Перезвоны",
+    "clientCallback": "Перезвонил сам",
+    "agentCallback": "Перезвонили мы",
+    "notProcessed": "Не обработан",
+    "processed": "Обработан"
+  },
+  "table": {
+    "date": "Дата",
+    "client": "Клиент",
+    "agent": "Оператор",
+    "duration": "Длительность",
+    "waitTime": "Ожидание",
+    "status": "Статус",
+    "search": "Поиск по номеру, статусу...",
+    "show": "Показывать",
+    "detailedLog": "Детальный лог звонков",
+    "noData": "Нет данных"
+  },
+  "chart": {
+    "hourlyDistribution": "Распределение по часам",
+    "calls": "Звонки",
+    "answered": "Отвечено"
+  },
+  "rankings": {
+    "title": "Рейтинг очередей",
+    "rank": "Ранг",
+    "queueName": "Очередь",
+    "department": "Отдел",
+    "totalCalls": "Звонков",
+    "answerRate": "Ответ",
+    "sla": "SLA",
+    "notProcessed": "Не обработано",
+    "asa": "ASA",
+    "compositeScore": "Рейтинг",
+    "loading": "Загрузка рейтинга...",
+    "exportExcel": "Экспорт в Excel"
+  },
+  "comparison": {
+    "title": "Сравнение периодов",
+    "weekToWeek": "Неделя к неделе",
+    "monthToMonth": "Месяц к месяцу",
+    "custom": "Произвольный",
+    "currentPeriod": "Текущий период",
+    "previousPeriod": "Предыдущий период",
+    "change": "Изменение",
+    "improved": "Улучшилось",
+    "declined": "Ухудшилось",
+    "noChange": "Без изменений"
+  },
+  "settings": {
+    "title": "Настройки",
+    "database": "База данных",
+    "email": "Email",
+    "workingHours": "Рабочие часы",
+    "enabled": "Включено",
+    "disabled": "Выключено",
+    "save": "Сохранить",
+    "cancel": "Отмена",
+    "saved": "Настройки сохранены",
+    "restarting": "Приложение перезапускается..."
+  },
+  "email": {
+    "title": "Email рассылка",
+    "addEmail": "Добавить email",
+    "recipients": "Получатели",
+    "active": "Активен",
+    "sendTest": "Отправить тест",
+    "dailyReport": "Ежедневный отчет"
+  },
+  "status": {
+    "checking": "Проверка...",
+    "online": "Онлайн",
+    "offline": "Оффлайн",
+    "loading": "Загрузка...",
+    "error": "Ошибка"
+  },
+  "common": {
+    "yes": "Да",
+    "no": "Нет",
+    "ok": "OK",
+    "cancel": "Отмена",
+    "save": "Сохранить",
+    "delete": "Удалить",
+    "edit": "Редактировать",
+    "close": "Закрыть",
+    "back": "Назад",
+    "next": "Далее",
+    "previous": "Предыдущий",
+    "all": "Все",
+    "none": "Нет",
+    "seconds": "сек",
+    "minutes": "мин",
+    "hours": "ч"
+  },
+  "errors": {
+    "generic": "Произошла ошибка",
+    "network": "Ошибка сети",
+    "notFound": "Не найдено",
+    "validation": "Ошибка валидации",
+    "serverError": "Ошибка сервера"
+  }
+}

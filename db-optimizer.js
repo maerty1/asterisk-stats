@@ -4,6 +4,7 @@
  */
 
 const Mysql2Adapter = require('./db-adapters/mysql2-adapter');
+const logger = require('./logger');
 
 // Получаем адаптер БД динамически (будет создан после загрузки настроек)
 let adapter = null;
@@ -11,10 +12,10 @@ let adapter = null;
 function getDbAdapter() {
   if (!adapter) {
     const config = {
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'freepbxuser',
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'freepbxuser',
       password: process.env.DB_PASS || '',
-      database: process.env.DB_NAME || 'asterisk',
+  database: process.env.DB_NAME || 'asterisk',
       connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT) || 20
     };
     adapter = new Mysql2Adapter(config);
@@ -132,7 +133,7 @@ function getPoolStats() {
  */
 function clearStatementCache() {
   statementCache.clear();
-  console.log('Кэш prepared statements очищен');
+  logger.info('Кэш prepared statements очищен');
 }
 
 /**

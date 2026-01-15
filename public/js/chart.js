@@ -389,9 +389,23 @@ function exportToCSV() {
       ...data.calls.map(call => {
         // Для исходящих звонков показываем destination (длинный номер)
         // Используем флаг isOutbound из данных сервера
-        const displayNumber = call.isOutbound && call.destination 
+        const rawNumber = call.isOutbound && call.destination 
           ? (call.destination || call.clientNumber || '-') 
           : (call.clientNumber || '-');
+        
+        // Форматируем номер (убираем +7 или 7 в начале)
+        const formatPhoneNumber = (number) => {
+          if (!number || number === '-') return number;
+          const num = number.toString().trim();
+          if (num.startsWith('+7')) {
+            return num.substring(2);
+          }
+          if (num.startsWith('7') && num.length > 10) {
+            return num.substring(1);
+          }
+          return num;
+        };
+        const displayNumber = formatPhoneNumber(rawNumber);
         
         // Извлекаем дату и время напрямую из строки (данные уже в локальном времени)
         const dateMatch = (call.startTime || '').toString().match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -1015,6 +1029,19 @@ class CallsTableManager {
       return `${secs} сек`;
     };
 
+    const formatPhoneNumber = (number) => {
+      if (!number) return '-';
+      const num = number.toString().trim();
+      // Убираем префиксы +7 или 7 в начале
+      if (num.startsWith('+7')) {
+        return num.substring(2);
+      }
+      if (num.startsWith('7') && num.length > 10) {
+        return num.substring(1);
+      }
+      return num;
+    };
+
     const getRecordingLink = (recordingFile) => {
       if (!recordingFile) {
         return null;
@@ -1142,9 +1169,10 @@ class CallsTableManager {
 
     // Для исходящих звонков показываем destination (длинный номер), а не clientNumber (короткий)
     // Используем флаг isOutbound из данных сервера (определяется по outbound_cnum)
-    const displayNumber = call.isOutbound && call.destination 
+    const rawNumber = call.isOutbound && call.destination 
       ? (call.destination || call.clientNumber || 'Unknown') 
       : (call.clientNumber || 'Unknown');
+    const displayNumber = formatPhoneNumber(rawNumber);
 
     return `
       <tr>

@@ -7,6 +7,69 @@ const { getQueueCallsUltraFast } = require('./db-optimized-queue');
 const { calculateStatsSimple } = require('./queue-rankings-helper');
 const { format } = require('date-fns');
 const { checkCallbacksBatch } = require('./callback-checker');
+const logger = require('./logger');
+
+// === ФИЛЬТРАЦИЯ ПО РАБОЧИМ ЧАСАМ ===
+/**
+ * Получить настройки рабочих часов
+ * @returns {Object} { enabled: boolean, startHour: number, startMinute: number, endHour: number, endMinute: number }
+ */
+function getWorkingHoursConfig() {
+  const enabled = process.env.WORK_HOURS_ENABLED === 'true';
+  const startTime = process.env.WORK_HOURS_START || '07:00';
+  const endTime = process.env.WORK_HOURS_END || '23:59';
+  
+  const [startHour, startMinute] = startTime.split(':').map(Number);
+  const [endHour, endMinute] = endTime.split(':').map(Number);
+  
+  return {
+    enabled,
+    startHour: startHour || 7,
+    startMinute: startMinute || 0,
+    endHour: endHour || 23,
+    endMinute: endMinute || 59
+  };
+}
+
+/**
+ * Фильтровать звонки по рабочим часам
+ * @param {Array} calls - Массив звонков
+ * @returns {Array} Отфильтрованные звонки
+ */
+function filterByWorkingHours(calls) {
+  const config = getWorkingHoursConfig();
+  
+  if (!config.enabled) {
+    return calls;
+  }
+  
+  const startMinutes = config.startHour * 60 + config.startMinute;
+  const endMinutes = config.endHour * 60 + config.endMinute;
+  
+  return calls.filter(call => {
+    if (!call.startTime) return false;
+    
+    let hour, minute;
+    
+    if (typeof call.startTime === 'string') {
+      const match = call.startTime.match(/(\d{2}):(\d{2})/);
+      if (match) {
+        hour = parseInt(match[1], 10);
+        minute = parseInt(match[2], 10);
+      } else {
+        return true;
+      }
+    } else if (call.startTime instanceof Date) {
+      hour = call.startTime.getHours();
+      minute = call.startTime.getMinutes();
+    } else {
+      return true;
+    }
+    
+    const callMinutes = hour * 60 + minute;
+    return callMinutes >= startMinutes && callMinutes <= endMinutes;
+  });
+}
 
 // Импортируем функцию форматирования названия очереди из app.js
 // Так как app.js не экспортирует, создадим свою версию здесь
@@ -30,7 +93,7 @@ async function refreshQueueNamesCache() {
     });
     queueNamesCacheTime = Date.now();
   } catch (err) {
-    console.error('Ошибка при загрузке названий очередей:', err);
+    logger.error('Ошибка при загрузке названий очередей:', err);
     queueNamesCache = {};
   }
 }
@@ -39,7 +102,7 @@ function formatQueueName(queueNumber) {
   const now = Date.now();
   if (now - queueNamesCacheTime > QUEUES_CACHE_TTL || Object.keys(queueNamesCache).length === 0) {
     refreshQueueNamesCache().catch(err => {
-      console.error('Ошибка при обновлении кэша названий очередей:', err);
+      logger.error('Ошибка при обновлении кэша названий очередей:', err);
     });
   }
   
@@ -330,7 +393,7 @@ async function checkCallbacksBatchForRankings(conn, calls, queueName) {
 
     return results;
   } catch (error) {
-    console.error(`[checkCallbacksBatchForRankings] Ошибка при проверке перезвонов для очереди ${queueName}:`, error.message);
+    logger.error(`[checkCallbacksBatchForRankings] Ошибка при проверке перезвонов для очереди ${queueName}:`, error.message);
     // В случае ошибки возвращаем результаты с "Не обработан"
     return results;
   }
@@ -351,7 +414,7 @@ async function getQueueRankings(startTime, endTime, sortBy = 'composite', depart
       await refreshQueueNamesCache();
     }
     
-    console.log(`[getQueueRankings] Начало расчета рейтинга: ${startTime} - ${endTime}`);
+    logger.info(`[getQueueRankings] Начало расчета рейтинга: ${startTime} - ${endTime}`);
     
     // Получаем список всех активных очередей за период
     const [queues] = await dbExecute(`
@@ -363,10 +426,10 @@ async function getQueueRankings(startTime, endTime, sortBy = 'composite', depart
       ORDER BY queuename
     `, [startTime, endTime]);
 
-    console.log(`[getQueueRankings] Найдено очередей: ${queues ? queues.length : 0}`);
+    logger.info(`[getQueueRankings] Найдено очередей: ${queues ? queues.length : 0}`);
 
     if (!queues || queues.length === 0) {
-      console.log(`[getQueueRankings] Нет очередей за период, возвращаем пустой массив`);
+      logger.info(`[getQueueRankings] Нет очередей за период, возвращаем пустой массив`);
       return [];
     }
 
@@ -376,7 +439,10 @@ async function getQueueRankings(startTime, endTime, sortBy = 'composite', depart
       
       try {
         // Используем UltraFast запрос для максимальной скорости
-        const calls = await getQueueCallsUltraFast(queueName, startTime, endTime);
+        let calls = await getQueueCallsUltraFast(queueName, startTime, endTime);
+        
+        // === ФИЛЬТРАЦИЯ ПО РАБОЧИМ ЧАСАМ ===
+        calls = filterByWorkingHours(calls);
         
         if (calls.length === 0) {
           return null;
@@ -454,7 +520,7 @@ async function getQueueRankings(startTime, endTime, sortBy = 'composite', depart
         const withCallbackAgent = abandonedWithStatus.filter(c => c.callbackStatus === 'Перезвонили мы').length;
         const withoutCallback = abandonedWithStatus.filter(c => !c.callbackStatus || c.callbackStatus === 'Не обработан').length;
         
-        console.log(`[getQueueRankings] Очередь ${queueName}: ${stats.totalCalls} звонков, пропущено: ${stats.abandonedCalls}, с перезвоном клиент: ${withCallbackSelf}, с перезвоном агент: ${withCallbackAgent}, без перезвона: ${withoutCallback}, статистика: clientCallbacks=${stats.clientCallbacks}, agentCallbacks=${stats.agentCallbacks}, noCallbacks=${stats.noCallbacks}, score: ${calculateCompositeScore(stats).toFixed(1)}, отдел: ${department || 'не указан'}`);
+        logger.info(`[getQueueRankings] Очередь ${queueName}: ${stats.totalCalls} звонков, пропущено: ${stats.abandonedCalls}, с перезвоном клиент: ${withCallbackSelf}, с перезвоном агент: ${withCallbackAgent}, без перезвона: ${withoutCallback}, статистика: clientCallbacks=${stats.clientCallbacks}, agentCallbacks=${stats.agentCallbacks}, noCallbacks=${stats.noCallbacks}, score: ${calculateCompositeScore(stats).toFixed(1)}, отдел: ${department || 'не указан'}`);
 
         // Рассчитываем процент необработанных звонков для отображения
         const noCallbacksRate = stats.totalCalls > 0
@@ -471,19 +537,19 @@ async function getQueueRankings(startTime, endTime, sortBy = 'composite', depart
           compositeScore: calculateCompositeScore(stats)
         };
       } catch (error) {
-        console.error(`Ошибка при обработке очереди ${queueName}:`, error.message);
+        logger.error(`Ошибка при обработке очереди ${queueName}:`, error.message);
         return null;
       }
     });
 
     // Ждем завершения всех расчетов
     const allResults = await Promise.all(rankingsPromises);
-    console.log(`[getQueueRankings] Обработано результатов: ${allResults.length}, не null: ${allResults.filter(r => r !== null).length}`);
+    logger.info(`[getQueueRankings] Обработано результатов: ${allResults.length}, не null: ${allResults.filter(r => r !== null).length}`);
     
     const rankings = allResults
       .filter(r => r !== null && r.totalCalls > 0);
 
-    console.log(`[getQueueRankings] Финальный рейтинг: ${rankings.length} очередей`);
+    logger.info(`[getQueueRankings] Финальный рейтинг: ${rankings.length} очередей`);
 
     // Сортируем по выбранному критерию
     rankings.sort((a, b) => {
@@ -511,7 +577,7 @@ async function getQueueRankings(startTime, endTime, sortBy = 'composite', depart
 
     return rankings;
   } catch (error) {
-    console.error('Ошибка при расчете рейтинга очередей:', error);
+    logger.error('Ошибка при расчете рейтинга очередей:', error);
     throw error;
   }
 }
@@ -524,57 +590,52 @@ async function getQueueRankings(startTime, endTime, sortBy = 'composite', depart
 function calculateCompositeScore(stats) {
   if (stats.totalCalls === 0) return 0;
 
-  // Веса для разных метрик
-  const weights = {
-    answerRate: 0.30,      // 30% - процент ответа
-    slaRate: 0.25,         // 25% - SLA
-    noCallbacksRate: -0.20, // -20% - процент необработанных (упущенных клиентов) - чем меньше, тем лучше
-    callbackRate: 0.10     // 10% - процент перезвонов
-  };
-
-  // Рассчитываем процент необработанных звонков (упущенных клиентов)
-  // Это более важная метрика, чем просто процент пропущенных, так как показывает
-  // реальную потерю клиентов, а не те звонки, по которым был перезвон
+  // === НОВАЯ СБАЛАНСИРОВАННАЯ ФОРМУЛА ===
+  // Итоговый рейтинг = Качество (90%) + Объем (10%)
+  // Максимум = 100 баллов
+  
+  // Рассчитываем процент необработанных звонков
   const noCallbacksRate = stats.totalCalls > 0
     ? (stats.noCallbacks / stats.totalCalls) * 100
     : 0;
-
-  // Базовые метрики качества
-  const qualityScore = 
-    (stats.answerRate * weights.answerRate) +
-    (stats.slaRate * weights.slaRate) +
-    ((100 - noCallbacksRate) * weights.noCallbacksRate) + // Инвертируем noCallbacksRate (чем меньше необработанных, тем лучше)
-    (stats.abandonedCalls > 0
-      ? ((stats.clientCallbacks + stats.agentCallbacks) / stats.abandonedCalls) * 100 * weights.callbackRate
-      : 100 * weights.callbackRate);
-
-  // Бонус за количество звонков: чем больше звонков, тем выше рейтинг
-  // Это учитывает сложность обработки большего количества звонков
-  // При большом объеме (например, 189 vs 15) разница должна быть очень значительной
   
-  // Используем квадратный корень с большим множителем для более существенного влияния объема
-  // Формула: sqrt(количество) * множитель дает сильный рост при больших объемах
-  const volumeBonus = Math.sqrt(stats.totalCalls) * 4.0;
+  // Рассчитываем процент перезвонов (от пропущенных)
+  const callbackRate = stats.abandonedCalls > 0
+    ? ((stats.clientCallbacks + stats.agentCallbacks) / stats.abandonedCalls) * 100
+    : 100; // Если нет пропущенных - считаем как 100%
   
-  // Примеры расчета:
-  // 15 звонков: sqrt(15) * 4.0 = 3.87 * 4.0 = 15.5 балла
-  // 56 звонков: sqrt(56) * 4.0 = 7.48 * 4.0 = 29.9 балла
-  // 189 звонков: sqrt(189) * 4.0 = 13.75 * 4.0 = 55.0 балла
+  // === КОМПОНЕНТЫ КАЧЕСТВА (до 90 баллов) ===
   
-  // Разница между 15 и 189 звонками: 55.0 - 15.5 = 39.5 балла!
-  // Это очень существенная разница, которая значительно компенсирует разницу в качестве
+  // 1. Процент ответа (0-40 баллов)
+  // 100% ответа = 40 баллов, 80% = 32 балла, 50% = 20 баллов
+  const answerScore = stats.answerRate * 0.40;
   
-  // Ограничиваем максимальный бонус, но делаем его достаточно большим
-  // Максимум 60 баллов для очень больших объемов (500+ звонков)
-  const maxVolumeBonus = 60.0;
-  const clampedBonus = Math.min(volumeBonus, maxVolumeBonus);
+  // 2. SLA (0-25 баллов)
+  // 100% SLA = 25 баллов, 70% = 17.5 баллов
+  const slaScore = stats.slaRate * 0.25;
+  
+  // 3. Обработка пропущенных (0-15 баллов)
+  // 0% необработанных = 15 баллов, 10% = 13.5 баллов, 50% = 7.5 баллов
+  const handlingScore = (100 - noCallbacksRate) * 0.15;
+  
+  // 4. Перезвоны (0-10 баллов)
+  // 100% перезвонов = 10 баллов, 50% = 5 баллов
+  const callbackScore = callbackRate * 0.10;
+  
+  // Итого качество (макс 90 баллов)
+  const qualityScore = answerScore + slaScore + handlingScore + callbackScore;
+  
+  // === БОНУС ЗА ОБЪЕМ (до 10 баллов) ===
+  // Используем логарифм для плавного роста
+  // 100 звонков = ~6 баллов, 500 = ~8, 1000 = ~9, 1500+ = 10
+  const volumeBonus = stats.totalCalls > 0
+    ? Math.min(10, Math.log10(stats.totalCalls) * 3.5)
+    : 0;
+  
+  // Итоговый рейтинг
+  const score = qualityScore + volumeBonus;
 
-  // Финальный рейтинг = качество + бонус за объем
-  // Теперь при значительной разнице в объеме очередь с большим количеством звонков
-  // получит более высокий рейтинг даже при немного меньшем проценте качества
-  const score = qualityScore + clampedBonus;
-
-  return Math.max(0, Math.min(100, score)); // Ограничиваем 0-100
+  return Math.max(0, Math.min(100, score));
 }
 
 /**

@@ -1,10 +1,16 @@
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
 const { format, subDays } = require('date-fns');
 const path = require('path');
 const fs = require('fs');
 const compression = require('compression');
+const cookieParser = require('cookie-parser');
 const { exec } = require('child_process');
+const logger = require('./logger');
+
+// WebSocket для real-time обновлений
+const { initWebSocket, getConnectedClients } = require('./websocket');
 
 // Используем оптимизированный модуль для работы с БД (аналог PDO в PHP)
 // Кэширует prepared statements и оптимизирует запросы
@@ -48,10 +54,85 @@ const {
 // SQLite модуль для настроек и email_reports
 const settingsDb = require('./settings-db');
 
+// Роутеры
+const { settingsRouter, emailReportsRouter, rankingsRouter, healthRouter, comparisonRouter } = require('./routes');
+
+// Swagger документация
+const { setupSwagger } = require('./swagger');
+
+// Prometheus метрики
+const { metricsMiddleware, metricsRouter, setActiveQueues } = require('./metrics');
+
+// i18n (многоязычность)
+const { i18nMiddleware, i18nRouter } = require('./i18n');
+
 // Флаги использования оптимизаций
 const USE_ULTRA_FAST_QUERIES = process.env.USE_ULTRA_FAST_QUERIES !== 'false'; // По умолчанию включено (самый быстрый)
 const USE_PARALLEL_QUERIES = process.env.USE_PARALLEL_QUERIES !== 'false';
 const USE_LARGE_DATA_OPTIMIZATION = process.env.USE_LARGE_DATA_OPTIMIZATION === 'true';
+
+// === ФИЛЬТРАЦИЯ ПО РАБОЧИМ ЧАСАМ ===
+/**
+ * Получить настройки рабочих часов
+ * @returns {Object} { enabled: boolean, startHour: number, startMinute: number, endHour: number, endMinute: number }
+ */
+function getWorkingHoursConfig() {
+  const enabled = process.env.WORK_HOURS_ENABLED === 'true';
+  const startTime = process.env.WORK_HOURS_START || '07:00';
+  const endTime = process.env.WORK_HOURS_END || '23:59';
+  
+  const [startHour, startMinute] = startTime.split(':').map(Number);
+  const [endHour, endMinute] = endTime.split(':').map(Number);
+  
+  return {
+    enabled,
+    startHour: startHour || 7,
+    startMinute: startMinute || 0,
+    endHour: endHour || 23,
+    endMinute: endMinute || 59
+  };
+}
+
+/**
+ * Фильтровать звонки по рабочим часам
+ * @param {Array} calls - Массив звонков
+ * @returns {Array} Отфильтрованные звонки
+ */
+function filterByWorkingHours(calls) {
+  const config = getWorkingHoursConfig();
+  
+  if (!config.enabled) {
+    return calls; // Фильтр выключен, возвращаем все звонки
+  }
+  
+  const startMinutes = config.startHour * 60 + config.startMinute;
+  const endMinutes = config.endHour * 60 + config.endMinute;
+  
+  return calls.filter(call => {
+    if (!call.startTime) return false;
+    
+    // Парсим время из startTime (формат: "YYYY-MM-DD HH:MM:SS" или Date)
+    let hour, minute;
+    
+    if (typeof call.startTime === 'string') {
+      const match = call.startTime.match(/(\d{2}):(\d{2})/);
+      if (match) {
+        hour = parseInt(match[1], 10);
+        minute = parseInt(match[2], 10);
+      } else {
+        return true; // Не удалось распарсить - оставляем звонок
+      }
+    } else if (call.startTime instanceof Date) {
+      hour = call.startTime.getHours();
+      minute = call.startTime.getMinutes();
+    } else {
+      return true; // Неизвестный формат - оставляем звонок
+    }
+    
+    const callMinutes = hour * 60 + minute;
+    return callMinutes >= startMinutes && callMinutes <= endMinutes;
+  });
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -81,7 +162,7 @@ async function initializeDatabaseAdapter() {
         }
       }
       
-      console.log('✅ Настройки загружены из базы данных');
+      logger.info('✅ Настройки загружены из базы данных');
       
       // Инициализируем адаптер БД с правильными настройками
       const { initAdapter } = require('./db-optimizer');
@@ -96,11 +177,11 @@ async function initializeDatabaseAdapter() {
       
       initAdapter(dbConfig);
       dbAdapterReady = true;
-      console.log('✅ Адаптер БД инициализирован с настройками из базы данных');
+      logger.info('✅ Адаптер БД инициализирован с настройками из базы данных');
       
     } catch (err) {
-      console.error('❌ Ошибка инициализации базы данных настроек:', err);
-      console.log('⚠️  Используются настройки из .env файла');
+      logger.error('❌ Ошибка инициализации базы данных настроек:', err);
+      logger.info('⚠️  Используются настройки из .env файла');
       
       // Инициализируем адаптер с дефолтными настройками
       const { initAdapter } = require('./db-optimizer');
@@ -127,6 +208,9 @@ let queueNamesCacheTime = 0;
 
 // Middleware
 app.use(compression()); // Сжатие gzip
+app.use(metricsMiddleware); // Prometheus метрики HTTP
+app.use(cookieParser()); // Парсинг cookies
+app.use(i18nMiddleware); // i18n многоязычность
 app.set('view engine', 'ejs');
 app.set('view cache', false); // Отключаем кэширование шаблонов
 app.use(express.json()); // Для JSON запросов
@@ -162,6 +246,19 @@ app.use('/images', express.static('public/images', {
 app.use(express.static('public', {
   maxAge: '1d'
 }));
+
+// Подключение роутеров
+app.use('/api/settings', settingsRouter);
+app.use('/api/email-reports', emailReportsRouter);
+app.use('/api/health', healthRouter);
+app.use('/api/comparison', comparisonRouter);
+app.use('/api/i18n', i18nRouter);
+
+// Swagger API документация
+setupSwagger(app);
+
+// Prometheus метрики endpoint
+app.use('/api/metrics', metricsRouter);
 
 // Функции помощники
 const helpers = {
@@ -206,7 +303,7 @@ const helpers = {
     }
     // Fallback: пробуем через Date, но используем getHours/getMinutes без таймзоны
     try {
-      const date = new Date(timeStr);
+    const date = new Date(timeStr);
       if (!isNaN(date.getTime())) {
         const hours = String(date.getHours()).padStart(2, '0');
         const minutes = String(date.getMinutes()).padStart(2, '0');
@@ -226,7 +323,7 @@ const helpers = {
     }
     // Fallback
     try {
-      const date = new Date(dateStr);
+    const date = new Date(dateStr);
       if (!isNaN(date.getTime())) {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -255,7 +352,7 @@ const helpers = {
     }
     // Fallback
     try {
-      const date = new Date(dateStr);
+    const date = new Date(dateStr);
       if (!isNaN(date.getTime())) {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -299,15 +396,15 @@ async function initializeApp() {
     await initializeDatabaseAdapter();
   }
   
-  console.log('🔄 Загрузка кэша очередей...');
+  logger.info('🔄 Загрузка кэша очередей...');
   await refreshQueuesCache();
-  console.log('🔄 Загрузка названий очередей...');
+  logger.info('🔄 Загрузка названий очередей...');
   await refreshQueueNamesCache();
-  console.log('✅ Кэши загружены, готов к работе');
+  logger.info('✅ Кэши загружены, готов к работе');
   
   // Выводим статистику пула при старте
   if (process.env.DEBUG_DB === 'true') {
-    console.log('📊 Статистика пула соединений:', getPoolStats());
+    logger.info('📊 Статистика пула соединений:', getPoolStats());
   }
 }
 
@@ -322,9 +419,10 @@ async function refreshQueuesCache() {
     `);
     availableQueues = queues.map(q => q.queuename);
     queuesCacheTime = Date.now();
-    console.log('Загружено очередей:', availableQueues.length);
+    logger.info('Загружено очередей:', availableQueues.length);
+    setActiveQueues(availableQueues.length); // Обновляем Prometheus метрику
   } catch (err) {
-    console.error('Ошибка при загрузке очередей:', err);
+    logger.error('Ошибка при загрузке очередей:', err);
   }
 }
 
@@ -346,10 +444,10 @@ async function refreshQueueNamesCache() {
     queueNamesCacheTime = Date.now();
     
     if (process.env.DEBUG === 'true') {
-      console.log('Загружено названий очередей:', Object.keys(queueNamesCache).length);
+      logger.info('Загружено названий очередей:', Object.keys(queueNamesCache).length);
     }
   } catch (err) {
-    console.error('Ошибка при загрузке названий очередей:', err);
+    logger.error('Ошибка при загрузке названий очередей:', err);
     queueNamesCache = {};
   }
 }
@@ -361,7 +459,7 @@ function getQueueName(queueNumber) {
     // Кэш еще не загружен - возвращаем null, но запускаем загрузку
     // В продакшене это не должно происходить, так как initializeApp() загружает кэш до старта сервера
     refreshQueueNamesCache().catch(err => {
-      console.error('Ошибка при обновлении кэша названий очередей:', err);
+      logger.error('Ошибка при обновлении кэша названий очередей:', err);
     });
     return null;
   }
@@ -370,7 +468,7 @@ function getQueueName(queueNumber) {
   if (now - queueNamesCacheTime > QUEUES_CACHE_TTL) {
     // Кэш устарел - обновляем асинхронно, но возвращаем текущее значение
     refreshQueueNamesCache().catch(err => {
-      console.error('Ошибка при обновлении кэша названий очередей:', err);
+      logger.error('Ошибка при обновлении кэша названий очередей:', err);
     });
   }
   
@@ -389,7 +487,7 @@ function getAvailableQueues() {
   if (now - queuesCacheTime > QUEUES_CACHE_TTL) {
     // Асинхронно обновляем кэш, но возвращаем текущий список
     refreshQueuesCache().catch(err => {
-      console.error('Ошибка при обновлении кэша очередей:', err);
+      logger.error('Ошибка при обновлении кэша очередей:', err);
     });
   }
   return availableQueues;
@@ -552,208 +650,8 @@ app.get('/rankings', (req, res) => {
 });
 
 // ==========================================
-// API для управления настройками
+// API для управления настройками и email - см. routes/settings.js и routes/email-reports.js
 // ==========================================
-
-// Получить все настройки
-app.get('/api/settings', async (req, res) => {
-  try {
-    const settings = settingsDb.getAllSettings();
-    res.json({ success: true, settings });
-  } catch (error) {
-    console.error('Ошибка получения настроек:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Сохранить настройки
-app.post('/api/settings', async (req, res) => {
-  try {
-    const { settings } = req.body;
-    
-    if (!settings || typeof settings !== 'object') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Неверный формат данных' 
-      });
-    }
-    
-    // Сохраняем каждую настройку
-    for (const [key, value] of Object.entries(settings)) {
-      await settingsDb.setSetting(key, value);
-    }
-    
-    // Отправляем ответ клиенту перед перезапуском
-    res.json({ 
-      success: true, 
-      message: 'Настройки успешно сохранены. Приложение перезапускается...',
-      restarting: true
-    });
-    
-    // Перезапускаем приложение через 1 секунду (даем время на отправку ответа)
-    setTimeout(() => {
-      console.log('🔄 Перезапуск приложения после изменения настроек...');
-      
-      // Проверяем, запущено ли приложение как systemd служба
-      exec('systemctl is-active --quiet asterisk-stats.service', (error) => {
-        if (error === null) {
-          // Запущено как служба - используем systemctl
-          console.log('✅ Используется systemd служба, перезапускаем через systemctl...');
-          exec('systemctl restart asterisk-stats.service', (err) => {
-            if (err) {
-              console.error('❌ Ошибка перезапуска через systemctl:', err);
-              // Fallback - завершаем процесс, systemd перезапустит
-              setTimeout(() => process.exit(0), 1000);
-            } else {
-              console.log('✅ Команда перезапуска отправлена в systemd');
-              // Завершаем процесс - systemd перезапустит его
-              setTimeout(() => process.exit(0), 500);
-            }
-          });
-        } else {
-          // Не запущено как служба - используем скрипт
-          console.log('⚠️ Приложение не запущено как служба, используем скрипт перезапуска...');
-          const restartHelper = path.join(__dirname, 'restart-helper.sh');
-          
-          exec(`bash "${restartHelper}" > /dev/null 2>&1 &`, {
-            detached: true,
-            stdio: 'ignore'
-          }, (err) => {
-            if (err) {
-              console.error('❌ Ошибка запуска скрипта перезапуска:', err);
-              setTimeout(() => process.exit(0), 1000);
-            } else {
-              console.log('✅ Скрипт перезапуска запущен');
-              setTimeout(() => process.exit(0), 1500);
-            }
-          });
-        }
-      });
-    }, 1000);
-    
-  } catch (error) {
-    console.error('Ошибка сохранения настроек:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ==========================================
-// API для управления email адресами
-// ==========================================
-
-// Получить все email адреса для очереди
-app.get('/api/email-reports/:queueName', async (req, res) => {
-  try {
-    const { queueName } = req.params;
-    const rows = await settingsDb.getAll(`
-      SELECT id, queue_name, email, is_active, created_at, updated_at
-      FROM email_reports
-      WHERE queue_name = ?
-      ORDER BY created_at DESC
-    `, [queueName]);
-    
-    res.json({ success: true, emails: rows });
-  } catch (error) {
-    console.error('Ошибка получения email адресов:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Получить все email адреса (для всех очередей)
-app.get('/api/email-reports', async (req, res) => {
-  try {
-    const rows = await settingsDb.getAll(`
-      SELECT id, queue_name, email, is_active, created_at, updated_at
-      FROM email_reports
-      ORDER BY queue_name, created_at DESC
-    `);
-    
-    res.json({ success: true, emails: rows });
-  } catch (error) {
-    console.error('Ошибка получения email адресов:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Добавить email адрес для очереди
-app.post('/api/email-reports', async (req, res) => {
-  try {
-    const { queue_name, email } = req.body;
-    
-    if (!queue_name || !email) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'queue_name и email обязательны' 
-      });
-    }
-    
-    // Валидация email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Неверный формат email адреса' 
-      });
-    }
-    
-    // SQLite использует INSERT OR REPLACE для обработки дубликатов
-    const [result] = await settingsDb.execute(`
-      INSERT OR REPLACE INTO email_reports (queue_name, email, is_active, updated_at)
-      VALUES (?, ?, 1, datetime('now'))
-    `, [queue_name, email]);
-    
-    // Получаем ID вставленной/обновленной записи
-    const insertedRow = await settingsDb.getOne(`
-      SELECT id FROM email_reports 
-      WHERE queue_name = ? AND email = ?
-    `, [queue_name, email]);
-    
-    res.json({ 
-      success: true, 
-      message: 'Email адрес успешно добавлен',
-      id: insertedRow ? insertedRow.id : result.insertId 
-    });
-  } catch (error) {
-    console.error('Ошибка добавления email адреса:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Обновить статус email адреса
-app.patch('/api/email-reports/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { is_active } = req.body;
-    
-    await settingsDb.execute(`
-      UPDATE email_reports
-      SET is_active = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `, [is_active === true || is_active === 'true' || is_active === 1 ? 1 : 0, id]);
-    
-    res.json({ success: true, message: 'Email адрес обновлен' });
-  } catch (error) {
-    console.error('Ошибка обновления email адреса:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Удалить email адрес
-app.delete('/api/email-reports/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    await settingsDb.execute(`
-      DELETE FROM email_reports
-      WHERE id = ?
-    `, [id]);
-    
-    res.json({ success: true, message: 'Email адрес удален' });
-  } catch (error) {
-    console.error('Ошибка удаления email адреса:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // Маршрут для ручной отправки ежедневного отчета (для тестирования)
 app.post('/api/send-daily-report', async (req, res) => {
@@ -794,8 +692,8 @@ app.post('/api/send-daily-report', async (req, res) => {
       const startTimeUTC = format(startOfDayUTC, 'yyyy-MM-dd HH:mm:ss');
       const endTimeUTC = format(endOfDayUTC, 'yyyy-MM-dd HH:mm:ss');
       
-      console.log(`📧 Генерация отчета для очереди ${queue_name} за ${reportDate} (${timezone})...`);
-      console.log(`📧 Диапазон запроса в UTC: ${startTimeUTC} - ${endTimeUTC}`);
+      logger.info(`📧 Генерация отчета для очереди ${queue_name} за ${reportDate} (${timezone})...`);
+      logger.info(`📧 Диапазон запроса в UTC: ${startTimeUTC} - ${endTimeUTC}`);
       const reportData = await generateQueueReport(currentPool, queue_name, reportDate, startTimeUTC, endTimeUTC, callFunctions);
       const result = await sendQueueReport(reportData, queue_name, currentPool);
       
@@ -816,7 +714,7 @@ app.post('/api/send-daily-report', async (req, res) => {
     } else {
       // Отправка общего отчета (для всех очередей)
       const { generateDailyReport, sendDailyReport } = require('./email-service');
-      console.log(`📧 Генерация общего отчета за ${reportDate}...`);
+      logger.info(`📧 Генерация общего отчета за ${reportDate}...`);
       const reportData = await generateDailyReport(pool, reportDate, callFunctions);
       const result = await sendDailyReport(reportData);
       
@@ -835,7 +733,7 @@ app.post('/api/send-daily-report', async (req, res) => {
       }
     }
   } catch (error) {
-    console.error('Ошибка при отправке отчета:', error);
+    logger.error('Ошибка при отправке отчета:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -869,11 +767,18 @@ app.post('/report', async (req, res) => {
         if (USE_ULTRA_FAST_QUERIES) {
           // Используем фильтрацию по очереди через queuelog (совместимо с PHP логикой)
           calls = await getInboundCallsByQueueUltraFast(queue_name, startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
-        } else {
-          // Fallback: используем обычный метод (без фильтрации по очереди)
-          calls = await getInboundCalls(pool, startTime, endTime);
-          // Фильтруем в памяти по queuename (менее эффективно)
-          // TODO: добавить поддержку фильтрации в других методах
+        } else if (USE_LARGE_DATA_OPTIMIZATION) {
+          // Fallback: используем оптимизированный метод и фильтруем в памяти
+        calls = await getInboundCallsOptimized(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
+          calls = calls.filter(call => call.queuename === queue_name);
+      } else if (USE_PARALLEL_QUERIES) {
+          // Fallback: параллельные запросы и фильтрация в памяти
+        calls = await getInboundCallsParallel(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
+          calls = calls.filter(call => call.queuename === queue_name);
+      } else {
+          // Fallback: обычный метод и фильтрация в памяти
+        calls = await getInboundCalls(pool, startTime, endTime);
+          calls = calls.filter(call => call.queuename === queue_name);
         }
       } else {
         // Если очередь не указана, показываем все входящие (как раньше)
@@ -881,11 +786,11 @@ app.post('/report', async (req, res) => {
           // Самый быстрый метод для входящих звонков
           calls = await getInboundCallsUltraFast(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
         } else if (USE_LARGE_DATA_OPTIMIZATION) {
-          calls = await getInboundCallsOptimized(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
-        } else if (USE_PARALLEL_QUERIES) {
-          calls = await getInboundCallsParallel(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
-        } else {
-          calls = await getInboundCalls(pool, startTime, endTime);
+        calls = await getInboundCallsOptimized(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
+      } else if (USE_PARALLEL_QUERIES) {
+        calls = await getInboundCallsParallel(startTime, endTime, CALL_FILTER_CONFIG.outboundMinLength);
+      } else {
+        calls = await getInboundCalls(pool, startTime, endTime);
         }
       }
     } else if (viewType === 'outbound') {
@@ -919,6 +824,15 @@ app.post('/report', async (req, res) => {
         // Передаем null - функция использует dbExecute
         calls = await getQueueCalls(null, queue_name, startTime, endTime);
       }
+    }
+    
+    // === ФИЛЬТРАЦИЯ ПО РАБОЧИМ ЧАСАМ ===
+    const callsBeforeFilter = calls.length;
+    calls = filterByWorkingHours(calls);
+    const callsAfterFilter = calls.length;
+    
+    if (callsBeforeFilter !== callsAfterFilter) {
+      logger.info(`⏰ Фильтр рабочих часов: ${callsBeforeFilter} → ${callsAfterFilter} звонков (отфильтровано: ${callsBeforeFilter - callsAfterFilter})`);
     }
     
     // Проверяем перезвоны для очередей и входящих звонков
@@ -971,7 +885,7 @@ app.post('/report', async (req, res) => {
       }
       
       if (process.env.DEBUG === 'true') {
-        console.log(`Проверено перезвонов: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
+        logger.info(`Проверено перезвонов: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
       }
     } else if (viewType === 'outbound_queue') {
       // Для исходящих очередей: пропущенные = no_answer, busy, failed (как для входящих)
@@ -1016,7 +930,7 @@ app.post('/report', async (req, res) => {
       }
       
       if (process.env.DEBUG === 'true') {
-        console.log(`Проверено перезвонов для исходящих очередей: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
+        logger.info(`Проверено перезвонов для исходящих очередей: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
       }
     } else if (viewType === 'inbound') {
       // Оптимизированная фильтрация пропущенных входящих звонков (один проход)
@@ -1034,9 +948,9 @@ app.post('/report', async (req, res) => {
         } else {
           // Стандартная логика для входящих без EVENT
           isAbandoned = call.status === 'no_answer' || 
-                        call.status === 'busy' || 
-                        call.status === 'failed' ||
-                        (call.duration && parseInt(call.duration) <= 5);
+                            call.status === 'busy' || 
+                            call.status === 'failed' ||
+                            (call.duration && parseInt(call.duration) <= 5);
         }
         
         if (isAbandoned) {
@@ -1075,7 +989,7 @@ app.post('/report', async (req, res) => {
       }
       
       if (process.env.DEBUG === 'true') {
-        console.log(`Проверено перезвонов для входящих: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
+        logger.info(`Проверено перезвонов для входящих: ${callbackCheckCount} из ${abandonedCount} пропущенных звонков (всего звонков: ${calls.length})`);
       }
     }
     
@@ -1102,7 +1016,7 @@ app.post('/report', async (req, res) => {
       helpers
     });
   } catch (err) {
-    console.error('Ошибка:', err);
+    logger.error('Ошибка:', err);
     res.status(500).render('error', { 
       message: 'Произошла ошибка при генерации отчета',
       error: err,
@@ -1131,11 +1045,11 @@ app.post('/rankings', async (req, res) => {
     const endTime = `${end_date} 23:59:59`;
     const sortCriteria = sortBy || 'composite';
     
-    console.log(`[Rankings] Запрос рейтинга: ${startTime} - ${endTime}, критерий: ${sortCriteria}, отдел: ${departmentFilter || 'все'}`);
+    logger.info(`[Rankings] Запрос рейтинга: ${startTime} - ${endTime}, критерий: ${sortCriteria}, отдел: ${departmentFilter || 'все'}`);
     
     const rankings = await getQueueRankings(startTime, endTime, sortCriteria, departmentFilter);
     
-    console.log(`[Rankings] Найдено очередей: ${rankings.length}`);
+    logger.info(`[Rankings] Найдено очередей: ${rankings.length}`);
     
     res.json({
       success: true,
@@ -1148,7 +1062,7 @@ app.post('/rankings', async (req, res) => {
       departmentFilter: departmentFilter || null
     });
   } catch (error) {
-    console.error('Ошибка при получении рейтинга:', error);
+    logger.error('Ошибка при получении рейтинга:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -1231,7 +1145,7 @@ app.post('/export-rankings-excel', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filenameUTF8}`);
     res.send(buffer);
   } catch (error) {
-    console.error('Ошибка при экспорте рейтинга в Excel:', error);
+    logger.error('Ошибка при экспорте рейтинга в Excel:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -1245,7 +1159,7 @@ app.post('/export-report-excel', async (req, res) => {
     const XLSX = require('xlsx');
     
     // Логирование для отладки
-    console.log('[EXPORT] Получен запрос на экспорт:', {
+    logger.info('[EXPORT] Получен запрос на экспорт:', {
       body: req.body,
       contentType: req.get('content-type'),
       hasBody: !!req.body
@@ -1253,10 +1167,10 @@ app.post('/export-report-excel', async (req, res) => {
     
     const { queue_name, start_date, end_date, view_type } = req.body;
     
-    console.log('[EXPORT] Извлеченные значения:', { queue_name, start_date, end_date, view_type });
+    logger.info('[EXPORT] Извлеченные значения:', { queue_name, start_date, end_date, view_type });
     
     if (!start_date || !end_date) {
-      console.error('[EXPORT] Ошибка: отсутствуют даты. Получено:', { start_date, end_date });
+      logger.error('[EXPORT] Ошибка: отсутствуют даты. Получено:', { start_date, end_date });
       return res.status(400).json({ 
         success: false, 
         error: 'Необходимо указать start_date и end_date' 
@@ -1437,7 +1351,7 @@ app.post('/export-report-excel', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filenameUTF8}`);
     res.send(buffer);
   } catch (error) {
-    console.error('Ошибка при экспорте отчета в Excel:', error);
+    logger.error('Ошибка при экспорте отчета в Excel:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -1465,7 +1379,7 @@ app.get('/js/sw.js', (req, res) => {
 // Поддерживаем форматы: in-..., out-..., q-... (записи очередей)
 app.get(/^\/recordings\/((in|out|q)-.+-.+\.mp3)$/, (req, res) => {
   const filename = req.params[0]; // Получаем из регулярного выражения
-  console.log('Fallback route hit with filename:', filename, 'full URL:', req.originalUrl);
+  logger.info('Fallback route hit with filename:', filename, 'full URL:', req.originalUrl);
 
   // Извлекаем дату из имени файла (ищем дату YYYYMMDD)
   const dateMatch = filename.match(/20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])/);
@@ -1476,11 +1390,11 @@ app.get(/^\/recordings\/((in|out|q)-.+-.+\.mp3)$/, (req, res) => {
       const day = datePart.substring(6, 8);
       // Перенаправляем на правильный формат URL
       const correctUrl = `/recordings/${year}/${month}/${day}?file=${encodeURIComponent(filename)}`;
-      console.log('Redirecting old format URL to:', correctUrl);
+      logger.info('Redirecting old format URL to:', correctUrl);
       return res.redirect(301, correctUrl);
   }
 
-  console.log('Filename does not contain valid date (YYYYMMDD)');
+  logger.info('Filename does not contain valid date (YYYYMMDD)');
   return res.status(404).send('File not found');
 });
 
@@ -1510,7 +1424,7 @@ app.get('/recordings/:year/:month/:day', (req, res) => {
         day = datePart.substring(6, 8);
         // Перенаправляем на правильный формат URL
         const correctUrl = `/recordings/${year}/${month}/${day}?file=${encodeURIComponent(filename)}`;
-        console.log('Redirecting old format URL to:', correctUrl);
+        logger.info('Redirecting old format URL to:', correctUrl);
         return res.redirect(301, correctUrl);
     }
   }
@@ -1527,7 +1441,7 @@ app.get('/recordings/:year/:month/:day', (req, res) => {
   // Проверяем наличие даты YYYYMMDD (год начинается с 2, месяц 01-12, день 01-31)
   const dateMatch = filename.match(/20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])/);
   if (!dateMatch || !filename.match(/\.mp3$/)) {
-    console.log('Filename validation failed for:', filename);
+    logger.info('Filename validation failed for:', filename);
     return res.status(400).render('error', {
       message: 'Неверный формат имени файла записи',
       error: { message: `Файл ${filename} имеет неверный формат. Ожидается формат с датой YYYYMMDD и расширением .mp3` },
@@ -1730,7 +1644,7 @@ async function getInboundCalls(conn, startTime, endTime) {
     }
     return String(time);
   };
-  
+
   return rows.map(row => {
     // Нормализуем disposition (убираем пробелы и приводим к верхнему регистру)
     const disposition = (row.disposition || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -1869,7 +1783,7 @@ async function getQueueAgents(conn, queueName, startTime, endTime) {
     FROM asterisk.queues_details
     WHERE id = ? AND keyword = 'member'
   `, [queueName]);
-  
+
   // Извлекаем номер из формата "Local/1006@from-queue/n,0"
   const agents = rows.map(row => {
     const member = String(row.member || '').trim();
@@ -1877,7 +1791,7 @@ async function getQueueAgents(conn, queueName, startTime, endTime) {
     const match = member.match(/Local\/(\d+)@/);
     if (match && match[1]) {
       return match[1];
-    }
+      }
     return null;
   }).filter(agent => agent && agent.length >= 3 && agent.length <= 5);
   
@@ -1891,40 +1805,40 @@ async function getQueueAgents(conn, queueName, startTime, endTime) {
 async function getOutboundQueueCalls(conn, queueName, startTime, endTime) {
   // Сначала получаем список внутренних номеров (агентов) из очереди
   const agents = await getQueueAgents(conn, queueName, startTime, endTime);
-  
+          
   if (!agents || agents.length === 0) {
-    console.log(`[getOutboundQueueCalls] Не найдено агентов в очереди ${queueName} за период ${startTime} - ${endTime}`);
+    logger.info(`[getOutboundQueueCalls] Не найдено агентов в очереди ${queueName} за период ${startTime} - ${endTime}`);
     return [];
   }
-  
-  console.log(`[getOutboundQueueCalls] Найдено ${agents.length} агентов в очереди ${queueName}: ${agents.slice(0, 5).join(', ')}${agents.length > 5 ? '...' : ''}`);
-  
+
+  logger.info(`[getOutboundQueueCalls] Найдено ${agents.length} агентов в очереди ${queueName}: ${agents.slice(0, 5).join(', ')}${agents.length > 5 ? '...' : ''}`);
+
   // Теперь получаем исходящие звонки от этих внутренних номеров
   const executeFn = (conn && typeof conn.execute === 'function') 
     ? conn.execute.bind(conn) 
     : dbExecute;
   
-  const minLength = CALL_FILTER_CONFIG.outboundMinLength;
+    const minLength = CALL_FILTER_CONFIG.outboundMinLength;
   
   // Создаем плейсхолдеры для IN clause
   const placeholders = agents.map(() => '?').join(',');
   
   const [rows] = await executeFn(`
-    SELECT 
+        SELECT 
       c.calldate, c.uniqueid, c.linkedid, c.src, c.dst, 
       c.disposition, c.billsec, c.duration, c.recordingfile,
       c.dcontext, c.channel, c.lastapp, c.lastdata,
       c.outbound_cnum, c.cnum
-    FROM asteriskcdrdb.cdr c
+        FROM asteriskcdrdb.cdr c
     WHERE c.calldate >= ? 
       AND c.calldate <= ?
       AND c.src IN (${placeholders})
-      AND c.outbound_cnum IS NOT NULL 
-      AND c.outbound_cnum != ''
+          AND c.outbound_cnum IS NOT NULL 
+          AND c.outbound_cnum != ''
       AND CHAR_LENGTH(c.outbound_cnum) >= ?
-      AND (c.lastapp IS NULL OR c.lastapp != 'Hangup')
-      AND c.dst IS NOT NULL
-      AND c.dst != ''
+          AND (c.lastapp IS NULL OR c.lastapp != 'Hangup')
+          AND c.dst IS NOT NULL
+          AND c.dst != ''
       AND CHAR_LENGTH(c.dst) > ?
     ORDER BY c.calldate DESC
   `, [startTime, endTime, ...agents, minLength, minLength]);
@@ -1978,9 +1892,9 @@ async function getOutboundQueueCalls(conn, queueName, startTime, endTime) {
       isOutbound: true, // Все звонки из getOutboundQueueCalls - исходящие
       outbound_cnum: row.outbound_cnum,
       cnum: row.cnum
-    };
-  });
-}
+          };
+      });
+    }
 
 // Функция checkCallbacksBatch перенесена в callback-checker.js
 // Используется импорт из модуля выше
@@ -2030,9 +1944,9 @@ async function checkCallbacks(conn, call, queueName) {
   const clientNumberLast9 = clientNumberStr.slice(-9);
   
   if (process.env.DEBUG === 'true') {
-    console.log(`[checkCallbacks] Проверка перезвонов для звонка ${call.callId}:`);
-    console.log(`  Номер: ${clientNumberStr} (последние 10: ${clientNumberLast10}, последние 9: ${clientNumberLast9})`);
-    console.log(`  Период поиска: ${callbackStartStr} - ${callbackEndStr}`);
+    logger.info(`[checkCallbacks] Проверка перезвонов для звонка ${call.callId}:`);
+    logger.info(`  Номер: ${clientNumberStr} (последние 10: ${clientNumberLast10}, последние 9: ${clientNumberLast9})`);
+    logger.info(`  Период поиска: ${callbackStartStr} - ${callbackEndStr}`);
   }
 
   try {
@@ -2073,7 +1987,7 @@ async function checkCallbacks(conn, call, queueName) {
     if (queueCallbackRows && queueCallbackRows.length > 0) {
       clientCallbackRows = queueCallbackRows;
       if (process.env.DEBUG === 'true') {
-        console.log(`[checkCallbacks] ✅ Найден перезвон в очереди для ${call.callId}`);
+        logger.info(`[checkCallbacks] ✅ Найден перезвон в очереди для ${call.callId}`);
       }
     } else {
       // 1.2. Если не найдено в очереди, ищем во всей базе CDR
@@ -2102,7 +2016,7 @@ async function checkCallbacks(conn, call, queueName) {
       if (cdrCallbackRows && cdrCallbackRows.length > 0) {
         clientCallbackRows = cdrCallbackRows;
         if (process.env.DEBUG === 'true') {
-          console.log(`[checkCallbacks] ✅ Найден перезвон в CDR (не в очереди) для ${call.callId}`);
+          logger.info(`[checkCallbacks] ✅ Найден перезвон в CDR (не в очереди) для ${call.callId}`);
         }
       }
     }
@@ -2110,12 +2024,12 @@ async function checkCallbacks(conn, call, queueName) {
     if (clientCallbackRows && clientCallbackRows.length > 0) {
       const callback = clientCallbackRows[0];
       if (process.env.DEBUG === 'true') {
-        console.log(`[checkCallbacks] ✅ Найден перезвон от клиента для ${call.callId}:`);
-        console.log(`  callback.uniqueid: ${callback.uniqueid}`);
-        console.log(`  callback.src: ${callback.src}`);
-        console.log(`  callback.calldate: ${callback.calldate}`);
-        console.log(`  callback.billsec: ${callback.billsec}`);
-        console.log(`  callback.disposition: ${callback.disposition}`);
+        logger.info(`[checkCallbacks] ✅ Найден перезвон от клиента для ${call.callId}:`);
+        logger.info(`  callback.uniqueid: ${callback.uniqueid}`);
+        logger.info(`  callback.src: ${callback.src}`);
+        logger.info(`  callback.calldate: ${callback.calldate}`);
+        logger.info(`  callback.billsec: ${callback.billsec}`);
+        logger.info(`  callback.disposition: ${callback.disposition}`);
       }
       
       if (callback.disposition === 'ANSWERED' && callback.billsec >= 5) {
@@ -2128,7 +2042,7 @@ async function checkCallbacks(conn, call, queueName) {
       }
     } else {
       if (process.env.DEBUG === 'true') {
-        console.log(`[checkCallbacks] ❌ Перезвон от клиента не найден для ${call.callId}`);
+        logger.info(`[checkCallbacks] ❌ Перезвон от клиента не найден для ${call.callId}`);
       }
     }
 
@@ -2155,11 +2069,11 @@ async function checkCallbacks(conn, call, queueName) {
     if (agentCallbackRows && agentCallbackRows.length > 0) {
       const callback = agentCallbackRows[0];
       if (process.env.DEBUG === 'true') {
-        console.log(`[checkCallbacks] ✅ Найден перезвон от агента для ${call.callId}:`);
-        console.log(`  callback.uniqueid: ${callback.uniqueid}`);
-        console.log(`  callback.dst: ${callback.dst}`);
-        console.log(`  callback.calldate: ${callback.calldate}`);
-        console.log(`  callback.billsec: ${callback.billsec}`);
+        logger.info(`[checkCallbacks] ✅ Найден перезвон от агента для ${call.callId}:`);
+        logger.info(`  callback.uniqueid: ${callback.uniqueid}`);
+        logger.info(`  callback.dst: ${callback.dst}`);
+        logger.info(`  callback.calldate: ${callback.calldate}`);
+        logger.info(`  callback.billsec: ${callback.billsec}`);
       }
       
       if (callback.disposition === 'ANSWERED' && callback.billsec >= 5) {
@@ -2172,13 +2086,13 @@ async function checkCallbacks(conn, call, queueName) {
       }
     } else {
       if (process.env.DEBUG === 'true') {
-        console.log(`[checkCallbacks] ❌ Перезвон от агента не найден для ${call.callId}`);
+        logger.info(`[checkCallbacks] ❌ Перезвон от агента не найден для ${call.callId}`);
       }
     }
     
     // Не обработан - не нашли ни перезвон от клиента, ни от агента
     if (process.env.DEBUG === 'true') {
-      console.log(`[checkCallbacks] ⏸️ Не обработан для ${call.callId} - перезвонов не найдено`);
+      logger.info(`[checkCallbacks] ⏸️ Не обработан для ${call.callId} - перезвонов не найдено`);
     }
     return {
       type: 'no_callback',
@@ -2187,7 +2101,7 @@ async function checkCallbacks(conn, call, queueName) {
       recordingFile: null
     };
   } catch (error) {
-    console.error('Ошибка при проверке перезвонов для звонка', call.callId, ':', error);
+    logger.error('Ошибка при проверке перезвонов для звонка', call.callId, ':', error);
     // При ошибке возвращаем "Не обработан" вместо null, чтобы статус был установлен
     return {
       type: 'no_callback',
@@ -2247,7 +2161,7 @@ function calculateStats(calls, viewType = 'queue') {
              (!call.connectTime && call.endTime && call.status !== 'completed_by_agent' && call.status !== 'completed_by_caller');
     }
   };
-
+  
   // СНАЧАЛА считаем статистику перезвонов - это определяет abandonedCalls, clientCallbacks, agentCallbacks, noCallbacks
   // Используем общую функцию для единообразия с рейтингом
   const callbackStats = calculateCallbackStats(calls, isAbandonedCall);
@@ -2322,7 +2236,7 @@ function calculateStats(calls, viewType = 'queue') {
       
       // Отладка для первых 3 звонков (если включена)
       if (process.env.DEBUG_HOURS === 'true' && idx < 3) {
-        console.log(`[DEBUG Hour] call.startTime:`, call.startTime, 'type:', typeof call.startTime, 'toString:', str);
+        logger.info(`[DEBUG Hour] call.startTime:`, call.startTime, 'type:', typeof call.startTime, 'toString:', str);
       }
       
       // Ищем час в формате "HH:MM" или "YYYY-MM-DD HH:MM:SS"
@@ -2330,7 +2244,7 @@ function calculateStats(calls, viewType = 'queue') {
       const hour = match ? parseInt(match[1], 10) : 0;
       
       if (process.env.DEBUG_HOURS === 'true' && idx < 3) {
-        console.log(`[DEBUG Hour] extracted hour:`, hour, 'from match:', match);
+        logger.info(`[DEBUG Hour] extracted hour:`, hour, 'from match:', match);
       }
       
       callsByHour[hour].total++;
@@ -2367,12 +2281,12 @@ function calculateStats(calls, viewType = 'queue') {
   let avgWaitTimeAnswered = (viewType === 'queue' || viewType === 'outbound_queue') && answeredWaitTimes.length > 0
     ? Math.round(answeredWaitTimes.reduce((a, b) => a + b, 0) / answeredWaitTimes.length)
     : avgWaitTime;
-  
+
   // Проверяем разумность значения (не больше 2 часов = 7200 секунд)
   if (isNaN(avgWaitTimeAnswered) || avgWaitTimeAnswered < 0 || avgWaitTimeAnswered > 7200) {
     avgWaitTimeAnswered = 0;
   }
-
+  
   // Профессиональные метрики колл-центра
   // ASA (Average Speed of Answer) - среднее время ответа на звонок (уже посчитано выше)
   let asa = avgWaitTimeAnswered;
@@ -2394,7 +2308,7 @@ function calculateStats(calls, viewType = 'queue') {
   // Проверка согласованности данных графика и статистики
   const totalNoCallbacksFromChart = Object.values(callsByHour).reduce((sum, hour) => sum + hour.noCallbacks, 0);
   
-  console.log('Статистика перезвонов:', {
+  logger.info('Статистика перезвонов:', {
     clientCallbacks,
     agentCallbacks,
     noCallbacks,
@@ -2436,7 +2350,7 @@ function calculateStats(calls, viewType = 'queue') {
 function initializeEmailReports() {
   // Проверяем, включена ли отправка email
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.log('📧 Ежедневные email отчеты отключены (нет конфигурации SMTP)');
+    logger.info('📧 Ежедневные email отчеты отключены (нет конфигурации SMTP)');
     return;
   }
 
@@ -2467,7 +2381,7 @@ function initializeEmailReports() {
   
   cron.schedule(cronSchedule, async () => {
     try {
-      console.log('📧 Начало генерации ежедневных отчетов по очередям...');
+      logger.info('📧 Начало генерации ежедневных отчетов по очередям...');
       
       // Получаем часовой пояс из настроек (без хардкода)
       const timezone = getTimezone();
@@ -2497,8 +2411,8 @@ function initializeEmailReports() {
       const startTimeUTC = format(startOfDayUTC, 'yyyy-MM-dd HH:mm:ss');
       const endTimeUTC = format(endOfDayUTC, 'yyyy-MM-dd HH:mm:ss');
       
-      console.log(`📧 Генерация отчета за ${todayStr} ${timezone} (UTC+${offsetHours})`);
-      console.log(`📧 Диапазон запроса в UTC: ${startTimeUTC} - ${endTimeUTC}`);
+      logger.info(`📧 Генерация отчета за ${todayStr} ${timezone} (UTC+${offsetHours})`);
+      logger.info(`📧 Диапазон запроса в UTC: ${startTimeUTC} - ${endTimeUTC}`);
       
       // Получаем список всех очередей с активными email адресами
       const queuesWithEmails = await settingsDb.getAll(`
@@ -2508,7 +2422,7 @@ function initializeEmailReports() {
       `);
       
       if (!queuesWithEmails || queuesWithEmails.length === 0) {
-        console.log('📧 Нет очередей с активными email адресами для отправки отчетов');
+        logger.info('📧 Нет очередей с активными email адресами для отправки отчетов');
         return;
       }
       
@@ -2523,20 +2437,20 @@ function initializeEmailReports() {
       const reportPromises = queuesWithEmails.map(async (queueRow) => {
         const queueName = queueRow.queue_name;
         try {
-          console.log(`📧 Генерация отчета для очереди ${queueName}...`);
+          logger.info(`📧 Генерация отчета для очереди ${queueName}...`);
           // Передаем дату отчета (в локальном TZ) и диапазон времени в UTC для запросов
           const reportData = await generateQueueReport(currentPool, queueName, todayStr, startTimeUTC, endTimeUTC, callFunctions);
           const result = await sendQueueReport(reportData, queueName, currentPool);
           
           if (result.success) {
-            console.log(`✅ Отчет для очереди ${queueName} успешно отправлен`);
+            logger.info(`✅ Отчет для очереди ${queueName} успешно отправлен`);
             return { success: true, queueName };
           } else {
-            console.error(`❌ Ошибка отправки отчета для очереди ${queueName}:`, result.error);
+            logger.error(`❌ Ошибка отправки отчета для очереди ${queueName}:`, result.error);
             return { success: false, queueName, error: result.error };
           }
         } catch (error) {
-          console.error(`❌ Ошибка при генерации/отправке отчета для очереди ${queueName}:`, error);
+          logger.error(`❌ Ошибка при генерации/отправке отчета для очереди ${queueName}:`, error);
           return { success: false, queueName, error: error.message };
         }
       });
@@ -2552,21 +2466,21 @@ function initializeEmailReports() {
           }
         } else {
           errorCount++;
-          console.error(`❌ Ошибка при обработке очереди ${queuesWithEmails[idx].queue_name}:`, result.reason);
+          logger.error(`❌ Ошибка при обработке очереди ${queuesWithEmails[idx].queue_name}:`, result.reason);
         }
       });
       
-      console.log(`📧 Итоги отправки отчетов: успешно ${successCount}, ошибок ${errorCount}`);
+      logger.info(`📧 Итоги отправки отчетов: успешно ${successCount}, ошибок ${errorCount}`);
     } catch (error) {
-      console.error('❌ Ошибка при генерации/отправке ежедневных отчетов:', error);
+      logger.error('❌ Ошибка при генерации/отправке ежедневных отчетов:', error);
     }
   }, {
     scheduled: true,
     timezone: getTimezone()
   });
 
-  console.log(`📧 Ежедневные email отчеты настроены. Расписание: ${cronSchedule} (${getTimezone()})`);
-  console.log('📧 Отчеты будут отправляться для каждой очереди отдельно на указанные email адреса');
+  logger.info(`📧 Ежедневные email отчеты настроены. Расписание: ${cronSchedule} (${getTimezone()})`);
+  logger.info('📧 Отчеты будут отправляться для каждой очереди отдельно на указанные email адреса');
 }
 
 // API endpoint для получения названий очередей
@@ -2579,7 +2493,7 @@ app.get('/api/queue-names', async (req, res) => {
     
     res.json(queueNamesCache);
   } catch (error) {
-    console.error('Ошибка получения названий очередей:', error);
+    logger.error('Ошибка получения названий очередей:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -2588,24 +2502,31 @@ app.get('/api/queue-names', async (req, res) => {
 // Убеждаемся, что все кэши загружены ПЕРЕД тем, как сервер начнет принимать запросы
 let serverReady = false;
 
+// Создаем HTTP сервер для Express и WebSocket
+const server = http.createServer(app);
+
+// Инициализируем WebSocket
+const io = initWebSocket(server);
+
 // Сначала инициализируем адаптер БД, затем приложение
 initializeDatabaseAdapter()
   .then(() => initializeApp())
   .then(() => {
     serverReady = true;
-  app.listen(PORT, () => {
-    console.log(`Сервер запущен на http://localhost:${PORT}`);
-    console.log(`Конфигурация фильтрации: минимальная длина номера для исходящих = ${CALL_FILTER_CONFIG.outboundMinLength}`);
+    server.listen(PORT, () => {
+      logger.info(`Сервер запущен на http://localhost:${PORT}`);
+      logger.info(`WebSocket: ws://localhost:${PORT}`);
+      logger.info(`Конфигурация фильтрации: минимальная длина номера для исходящих = ${CALL_FILTER_CONFIG.outboundMinLength}`);
     
-    // Инициализируем отправку email отчетов
-    initializeEmailReports();
-  });
+      // Инициализируем отправку email отчетов
+      initializeEmailReports();
+    });
   })
   .catch(err => {
-  console.error('Ошибка при инициализации:', err);
+    logger.error('Ошибка при инициализации:', err);
     // Запускаем сервер даже при ошибке, но с предупреждением
     serverReady = true;
-    app.listen(PORT, () => {
-      console.log(`⚠️ Сервер запущен с ошибками инициализации на http://localhost:${PORT}`);
+    server.listen(PORT, () => {
+      logger.info(`⚠️ Сервер запущен с ошибками инициализации на http://localhost:${PORT}`);
     });
 });

@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const logger = require('./logger');
 
 let initSqlJs;
 let SQL;
@@ -23,7 +24,7 @@ async function loadSqlJs() {
     });
     return SQL;
   } catch (err) {
-    console.error('Ошибка загрузки sql.js:', err);
+    logger.error('Ошибка загрузки sql.js:', err);
     throw new Error('Не удалось загрузить sql.js. Попробуйте: npm install sql.js --legacy-peer-deps');
   }
 }
@@ -62,7 +63,12 @@ const DEFAULT_SETTINGS = {
   USE_PARALLEL_QUERIES: 'true',
   USE_LARGE_DATA_OPTIMIZATION: 'false',
   OUTBOUND_MIN_LENGTH: '4',
-  QUEUES_CACHE_TTL: '3600000'
+  QUEUES_CACHE_TTL: '3600000',
+  
+  // Working hours settings
+  WORK_HOURS_ENABLED: 'false',
+  WORK_HOURS_START: '07:00',
+  WORK_HOURS_END: '23:59'
 };
 
 /**
@@ -76,10 +82,10 @@ async function initDatabase() {
     if (fs.existsSync(DB_PATH)) {
       const buffer = fs.readFileSync(DB_PATH);
       db = new SQLInstance.Database(buffer);
-      console.log('✅ База данных настроек загружена:', DB_PATH);
+      logger.info('✅ База данных настроек загружена:', DB_PATH);
     } else {
       db = new SQLInstance.Database();
-      console.log('✅ Создана новая база данных настроек:', DB_PATH);
+      logger.info('✅ Создана новая база данных настроек:', DB_PATH);
     }
     
     // Создаем таблицы
@@ -93,10 +99,10 @@ async function initDatabase() {
     // Сохраняем базу данных
     saveDatabase();
     
-    console.log('✅ База данных настроек инициализирована');
+    logger.info('✅ База данных настроек инициализирована');
     return db;
   } catch (err) {
-    console.error('Ошибка инициализации базы данных настроек:', err);
+    logger.error('Ошибка инициализации базы данных настроек:', err);
     throw err;
   }
 }
@@ -112,7 +118,7 @@ function saveDatabase() {
     const buffer = Buffer.from(data);
     fs.writeFileSync(DB_PATH, buffer);
   } catch (err) {
-    console.error('Ошибка сохранения базы данных:', err);
+    logger.error('Ошибка сохранения базы данных:', err);
   }
 }
 
@@ -161,7 +167,7 @@ function initializeDefaultSettings() {
     throw new Error('База данных не инициализирована');
   }
   
-  console.log('📝 Инициализация настроек по умолчанию...');
+  logger.info('📝 Инициализация настроек по умолчанию...');
   
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     db.run(`
@@ -175,7 +181,7 @@ function initializeDefaultSettings() {
   }
   
   saveDatabase();
-  console.log('✅ Настройки по умолчанию инициализированы');
+  logger.info('✅ Настройки по умолчанию инициализированы');
 }
 
 /**
@@ -234,7 +240,7 @@ function getSetting(key, defaultValue = null) {
     // Если настройка не найдена, возвращаем из .env или значение по умолчанию
     return process.env[key] || defaultValue || DEFAULT_SETTINGS[key] || null;
   } catch (err) {
-    console.error(`Ошибка получения настройки ${key}:`, err);
+    logger.error(`Ошибка получения настройки ${key}:`, err);
     return process.env[key] || defaultValue || DEFAULT_SETTINGS[key] || null;
   }
 }
@@ -258,7 +264,7 @@ function setSetting(key, value, description = null) {
     saveDatabase();
     return Promise.resolve(true);
   } catch (err) {
-    console.error(`Ошибка установки настройки ${key}:`, err);
+    logger.error(`Ошибка установки настройки ${key}:`, err);
     return Promise.reject(err);
   }
 }
@@ -298,7 +304,7 @@ function getAllSettings() {
     
     return settings;
   } catch (err) {
-    console.error('Ошибка получения всех настроек:', err);
+    logger.error('Ошибка получения всех настроек:', err);
     return DEFAULT_SETTINGS;
   }
 }
@@ -339,7 +345,7 @@ function execute(sql, params = []) {
       }, {}]);
     }
   } catch (err) {
-    console.error('Ошибка выполнения SQL:', err, 'SQL:', sql);
+    logger.error('Ошибка выполнения SQL:', err, 'SQL:', sql);
     throw err;
   }
 }

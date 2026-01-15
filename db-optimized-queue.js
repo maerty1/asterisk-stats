@@ -6,6 +6,10 @@
  */
 
 const { execute: dbExecute, getConnection } = require('./db-optimizer');
+const logger = require('./logger');
+
+// Константа для разбиения запросов на батчи (избежание ошибки "too many placeholders")
+const BATCH_SIZE = 1000;
 
 // =============================================================================
 // ОБЩИЕ ФУНКЦИИ
@@ -150,32 +154,116 @@ async function getQueueCallsUltraFast(queueName, startTime, endTime) {
   // Шаг 2: Собираем уникальные callid
   const callIds = [...new Set(queueRows.map(r => r.callid))];
   
-  // Шаг 3: Получаем recordingfile для callid (приоритет: записи очереди)
+  // Получаем minLength из настроек (для фильтрации входящих звонков)
+  const minLength = parseInt(process.env.OUTBOUND_MIN_LENGTH || '4', 10);
+  
+  // Шаг 3: Получаем данные из CDR (recordingfile + src/dst для фильтрации) - разбиваем на батчи
   const start2 = Date.now();
-  const placeholders = callIds.map(() => '?').join(',');
-  const [cdrRows] = await dbExecute(`
-    SELECT linkedid, recordingfile,
-           CASE 
-             WHEN recordingfile LIKE ? THEN 1
-             WHEN recordingfile LIKE 'q-%' THEN 2
-             ELSE 3
-           END as priority
-    FROM asteriskcdrdb.cdr
-    WHERE linkedid IN (${placeholders})
-      AND disposition = 'ANSWERED'
-      AND recordingfile IS NOT NULL
-    ORDER BY linkedid, priority, recordingfile
-  `, [`q-${queueName}-%`, ...callIds]);
+  let cdrRows = [];
+  
+  for (let i = 0; i < callIds.length; i += BATCH_SIZE) {
+    const batch = callIds.slice(i, i + BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const [batchRows] = await dbExecute(`
+      SELECT 
+        linkedid, 
+        uniqueid,
+        recordingfile,
+        src,
+        dst,
+        CASE 
+          WHEN recordingfile LIKE ? THEN 1
+          WHEN recordingfile LIKE 'q-%' THEN 2
+          ELSE 3
+        END as priority
+      FROM asteriskcdrdb.cdr
+      WHERE linkedid IN (${placeholders})
+        AND disposition = 'ANSWERED'
+        AND recordingfile IS NOT NULL
+      ORDER BY linkedid, priority, recordingfile
+    `, [`q-${queueName}-%`, ...batch]);
+    cdrRows.push(...batchRows);
+  }
   const time2 = Date.now() - start2;
   
-  // Шаг 4: Создаем Map для recordingfile
-  const recordingMap = createMap(cdrRows, 'linkedid', 'recordingfile');
+  // Шаг 3b: Получаем src/dst для всех звонков (для фильтрации входящих)
+  // Проверяем по linkedid, так как в queuelog callid обычно равен linkedid
+  // Разбиваем на батчи для избежания ошибки "too many placeholders"
+  let cdrDataRows = [];
   
-  // Шаг 5: Обрабатываем в памяти
+  for (let i = 0; i < callIds.length; i += BATCH_SIZE) {
+    const batch = callIds.slice(i, i + BATCH_SIZE);
+    const batchPlaceholders = batch.map(() => '?').join(',');
+    const [batchRows] = await dbExecute(`
+      SELECT 
+        uniqueid,
+        linkedid,
+        src,
+        dst
+      FROM asteriskcdrdb.cdr
+      WHERE (uniqueid IN (${batchPlaceholders}) OR linkedid IN (${batchPlaceholders}))
+        AND src IS NOT NULL 
+        AND src != ''
+        AND dst IS NOT NULL 
+        AND dst != ''
+      GROUP BY linkedid, uniqueid
+    `, [...batch, ...batch]);
+    cdrDataRows.push(...batchRows);
+  }
+  
+  // Создаем Map для фильтрации по длине номера (по linkedid и uniqueid)
+  const cdrDataMap = new Map();
+  const cdrDataMapByLinkedId = new Map();
+  cdrDataRows.forEach(row => {
+    const data = {
+      src: row.src,
+      dst: row.dst,
+      linkedid: row.linkedid
+    };
+    cdrDataMap.set(row.uniqueid, data);
+    cdrDataMapByLinkedId.set(row.linkedid, data);
+  });
+  
+  // Шаг 4: Фильтруем callIds - оставляем только входящие звонки (от длинного на короткий)
+  const validCallIds = callIds.filter(callid => {
+    // Проверяем по uniqueid и linkedid (callid может быть и тем, и другим)
+    const cdrData = cdrDataMap.get(callid) || cdrDataMapByLinkedId.get(callid);
+    
+    // Если нет данных в CDR - исключаем (это не входящий звонок из внешней сети)
+    if (!cdrData || !cdrData.src || !cdrData.dst) {
+      return false;
+    }
+    
+    const srcLength = cdrData.src.toString().length;
+    const dstLength = cdrData.dst.toString().length;
+    
+    // Входящий звонок: src (от клиента) длинный (> minLength), dst (к очереди) короткий (<= minLength)
+    // Пример: src = "89001234567" (11 цифр), dst = "1049" (4 цифры) - это входящий
+    // Пример: src = "1033" (4 цифры), dst = "1049" (4 цифры) - это внутренний, исключаем
+    return srcLength > minLength && dstLength <= minLength;
+  });
+  
+  // Шаг 5: Создаем Map для recordingfile (только для валидных звонков)
+  const validLinkedIds = new Set(validCallIds.map(callid => {
+    const cdrData = cdrDataMap.get(callid);
+    return cdrData ? cdrData.linkedid : callid;
+  }));
+  const recordingMap = createMap(
+    cdrRows.filter(row => validLinkedIds.has(row.linkedid)), 
+    'linkedid', 
+    'recordingfile'
+  );
+  
+  // Шаг 6: Обрабатываем в памяти (только валидные звонки)
   const start3 = Date.now();
+  const validCallIdsSet = new Set(validCallIds);
   const calls = {};
   
   queueRows.forEach(row => {
+    // Пропускаем звонки, которые не прошли фильтрацию по длине номера
+    if (!validCallIdsSet.has(row.callid)) {
+      return;
+    }
     if (!calls[row.callid]) {
       calls[row.callid] = {
         callId: row.callid,
@@ -229,7 +317,7 @@ async function getQueueCallsUltraFast(queueName, startTime, endTime) {
   const totalTime = Date.now() - startTotal;
   
   if (process.env.DEBUG_DB === 'true') {
-    console.log(`[UltraFast Queue] queuelog: ${time1}ms, cdr: ${time2}ms, обработка: ${time3}ms, всего: ${totalTime}ms, звонков: ${result.length}`);
+    logger.info(`[UltraFast Queue] queuelog: ${time1}ms, cdr: ${time2}ms, обработка: ${time3}ms, всего: ${totalTime}ms, звонков: ${result.length}`);
   }
   
   return result;
@@ -355,18 +443,25 @@ async function getInboundCallsUltraFast(startTime, endTime, minLength = 4) {
   // Шаг 2: Собираем уникальные linkedid
   const linkedIds = [...new Set(rows.map(r => r.linkedid))];
   
-  // Шаг 3: Получаем recordingfile отдельно
+  // Шаг 3: Получаем recordingfile отдельно (разбиваем на батчи для избежания ошибки "too many placeholders")
   const start2 = Date.now();
-  const placeholders = linkedIds.map(() => '?').join(',');
-  const [recordingRows] = await dbExecute(`
-    SELECT linkedid, recordingfile
-    FROM asteriskcdrdb.cdr
-    WHERE linkedid IN (${placeholders})
-      AND disposition = 'ANSWERED'
-      AND recordingfile IS NOT NULL
-      AND recordingfile != ''
-    ORDER BY linkedid, calldate DESC
-  `, linkedIds);
+  let recordingRows = [];
+  
+  // Разбиваем linkedIds на батчи
+  for (let i = 0; i < linkedIds.length; i += BATCH_SIZE) {
+    const batch = linkedIds.slice(i, i + BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const [batchRows] = await dbExecute(`
+      SELECT linkedid, recordingfile
+      FROM asteriskcdrdb.cdr
+      WHERE linkedid IN (${placeholders})
+        AND disposition = 'ANSWERED'
+        AND recordingfile IS NOT NULL
+        AND recordingfile != ''
+      ORDER BY linkedid, calldate DESC
+    `, batch);
+    recordingRows.push(...batchRows);
+  }
   const time2 = Date.now() - start2;
   
   // Шаг 4: Создаем Map
@@ -394,7 +489,7 @@ async function getInboundCallsUltraFast(startTime, endTime, minLength = 4) {
   const totalTime = Date.now() - startTotal;
   
   if (process.env.DEBUG_DB === 'true') {
-    console.log(`[UltraFast Inbound All] cdr: ${time1}ms, recordings: ${time2}ms, обработка: ${time3}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
+    logger.info(`[UltraFast Inbound All] cdr: ${time1}ms, recordings: ${time2}ms, обработка: ${time3}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
   }
   
   return calls;
@@ -482,22 +577,29 @@ async function getInboundCallsByQueueUltraFast(queueNames, startTime, endTime, m
   
   const callIds = [...callEventsMap.keys()];
   
-  // Шаг 3: Получаем данные из CDR для этих callid
+  // Шаг 3: Получаем данные из CDR для этих callid (разбиваем на батчи)
+  // Для входящих звонков: src (от клиента) должен быть длинным (> minLength), dst (к очереди) - коротким (<= minLength)
   const start2 = Date.now();
-  const cdrPlaceholders = callIds.map(() => '?').join(',');
-  const [cdrRows] = await dbExecute(`
-    SELECT 
-      c.uniqueid, c.linkedid, c.calldate, c.src, c.dst, c.did,
-      c.disposition, c.billsec, c.duration, c.recordingfile,
-      c.dcontext, c.channel
-    FROM asteriskcdrdb.cdr c
-    WHERE c.uniqueid IN (${cdrPlaceholders})
-      AND (c.channel LIKE 'PJSIP%' OR c.channel LIKE 'SIP%')
-      AND LENGTH(c.src) >= ?
-      AND (LENGTH(c.did) >= 4 OR LENGTH(c.dst) <= ?)
-    GROUP BY c.linkedid
-    ORDER BY c.calldate DESC
-  `, [...callIds, minLength, minLength]);
+  let cdrRows = [];
+  
+  for (let i = 0; i < callIds.length; i += BATCH_SIZE) {
+    const batch = callIds.slice(i, i + BATCH_SIZE);
+    const cdrPlaceholders = batch.map(() => '?').join(',');
+    const [batchRows] = await dbExecute(`
+      SELECT 
+        c.uniqueid, c.linkedid, c.calldate, c.src, c.dst, c.did,
+        c.disposition, c.billsec, c.duration, c.recordingfile,
+        c.dcontext, c.channel
+      FROM asteriskcdrdb.cdr c
+      WHERE c.uniqueid IN (${cdrPlaceholders})
+        AND (c.channel LIKE 'PJSIP%' OR c.channel LIKE 'SIP%')
+        AND CHAR_LENGTH(c.src) > ?
+        AND CHAR_LENGTH(c.dst) <= ?
+      GROUP BY c.linkedid
+      ORDER BY c.calldate DESC
+    `, [...batch, minLength, minLength]);
+    cdrRows.push(...batchRows);
+  }
   const time2 = Date.now() - start2;
   
   // Создаем Map для CDR данных
@@ -506,22 +608,28 @@ async function getInboundCallsByQueueUltraFast(queueNames, startTime, endTime, m
     cdrMap.set(row.uniqueid, row);
   });
   
-  // Шаг 4: Получаем recordingfile для звонков без записи
+  // Шаг 4: Получаем recordingfile для звонков без записи (разбиваем на батчи)
   const linkedIds = [...new Set(cdrRows.map(r => r.linkedid))];
   let recordingMap = new Map();
   
   if (linkedIds.length > 0) {
     const start3 = Date.now();
-    const recPlaceholders = linkedIds.map(() => '?').join(',');
-    const [recordingRows] = await dbExecute(`
-      SELECT linkedid, recordingfile
-      FROM asteriskcdrdb.cdr
-      WHERE linkedid IN (${recPlaceholders})
-        AND disposition = 'ANSWERED'
-        AND recordingfile IS NOT NULL
-        AND recordingfile != ''
-      ORDER BY linkedid, calldate DESC
-    `, linkedIds);
+    let recordingRows = [];
+    
+    for (let i = 0; i < linkedIds.length; i += BATCH_SIZE) {
+      const batch = linkedIds.slice(i, i + BATCH_SIZE);
+      const recPlaceholders = batch.map(() => '?').join(',');
+      const [batchRows] = await dbExecute(`
+        SELECT linkedid, recordingfile
+        FROM asteriskcdrdb.cdr
+        WHERE linkedid IN (${recPlaceholders})
+          AND disposition = 'ANSWERED'
+          AND recordingfile IS NOT NULL
+          AND recordingfile != ''
+        ORDER BY linkedid, calldate DESC
+      `, batch);
+      recordingRows.push(...batchRows);
+    }
     
     recordingMap = createMap(recordingRows, 'linkedid', 'recordingfile');
   }
@@ -581,7 +689,7 @@ async function getInboundCallsByQueueUltraFast(queueNames, startTime, endTime, m
   const totalTime = Date.now() - startTotal;
   
   if (process.env.DEBUG_DB === 'true') {
-    console.log(`[UltraFast Inbound Queue] queuelog: ${time1}ms, cdr: ${time2}ms, обработка: ${time4}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
+    logger.info(`[UltraFast Inbound Queue] queuelog: ${time1}ms, cdr: ${time2}ms, обработка: ${time4}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
   }
   
   return calls;
@@ -631,18 +739,25 @@ async function getOutboundCallsUltraFast(startTime, endTime, minLength = 4) {
   // Шаг 2: Собираем уникальные linkedid
   const linkedIds = [...new Set(rows.map(r => r.linkedid))];
   
-  // Шаг 3: Получаем recordingfile
+  // Шаг 3: Получаем recordingfile (разбиваем на батчи для избежания ошибки "too many placeholders")
   const start2 = Date.now();
-  const placeholders = linkedIds.map(() => '?').join(',');
-  const [recordingRows] = await dbExecute(`
-    SELECT linkedid, recordingfile
-    FROM asteriskcdrdb.cdr
-    WHERE linkedid IN (${placeholders})
-      AND disposition = 'ANSWERED'
-      AND recordingfile IS NOT NULL
-      AND recordingfile != ''
-    ORDER BY linkedid, calldate DESC
-  `, linkedIds);
+  let recordingRows = [];
+  
+  // Разбиваем linkedIds на батчи
+  for (let i = 0; i < linkedIds.length; i += BATCH_SIZE) {
+    const batch = linkedIds.slice(i, i + BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const [batchRows] = await dbExecute(`
+      SELECT linkedid, recordingfile
+      FROM asteriskcdrdb.cdr
+      WHERE linkedid IN (${placeholders})
+        AND disposition = 'ANSWERED'
+        AND recordingfile IS NOT NULL
+        AND recordingfile != ''
+      ORDER BY linkedid, calldate DESC
+    `, batch);
+    recordingRows.push(...batchRows);
+  }
   const time2 = Date.now() - start2;
   
   // Шаг 4: Создаем Map
@@ -673,7 +788,7 @@ async function getOutboundCallsUltraFast(startTime, endTime, minLength = 4) {
   const totalTime = Date.now() - startTotal;
   
   if (process.env.DEBUG_DB === 'true') {
-    console.log(`[UltraFast Outbound] cdr: ${time1}ms, recordings: ${time2}ms, обработка: ${time3}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
+    logger.info(`[UltraFast Outbound] cdr: ${time1}ms, recordings: ${time2}ms, обработка: ${time3}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
   }
   
   return calls;
@@ -741,19 +856,25 @@ async function getOutboundQueueCallsUltraFast(queueName, startTime, endTime) {
     return [];
   }
   
-  // Шаг 3: Получаем recordingfile
+  // Шаг 3: Получаем recordingfile (разбиваем на батчи для избежания ошибки "too many placeholders")
   const linkedIds = [...new Set(rows.map(r => r.linkedid))];
   const start3 = Date.now();
-  const recPlaceholders = linkedIds.map(() => '?').join(',');
-  const [recordingRows] = await dbExecute(`
-    SELECT linkedid, recordingfile
-    FROM asteriskcdrdb.cdr
-    WHERE linkedid IN (${recPlaceholders})
-      AND disposition = 'ANSWERED'
-      AND recordingfile IS NOT NULL
-      AND recordingfile != ''
-    ORDER BY linkedid, calldate DESC
-  `, linkedIds);
+  let recordingRows = [];
+  
+  for (let i = 0; i < linkedIds.length; i += BATCH_SIZE) {
+    const batch = linkedIds.slice(i, i + BATCH_SIZE);
+    const recPlaceholders = batch.map(() => '?').join(',');
+    const [batchRows] = await dbExecute(`
+      SELECT linkedid, recordingfile
+      FROM asteriskcdrdb.cdr
+      WHERE linkedid IN (${recPlaceholders})
+        AND disposition = 'ANSWERED'
+        AND recordingfile IS NOT NULL
+        AND recordingfile != ''
+      ORDER BY linkedid, calldate DESC
+    `, batch);
+    recordingRows.push(...batchRows);
+  }
   const time3 = Date.now() - start3;
   
   // Шаг 4: Создаем Map
@@ -764,11 +885,11 @@ async function getOutboundQueueCallsUltraFast(queueName, startTime, endTime) {
   const calls = rows.map((row, idx) => {
     // Отладка для первых 3 звонков
     if (idx < 3 && process.env.DEBUG_DB === 'true') {
-      console.log(`[DEBUG OutboundQueue] row.calldate:`, row.calldate, 'type:', typeof row.calldate, 'isDate:', row.calldate instanceof Date);
+      logger.info(`[DEBUG OutboundQueue] row.calldate:`, row.calldate, 'type:', typeof row.calldate, 'isDate:', row.calldate instanceof Date);
       if (row.calldate instanceof Date) {
-        console.log(`[DEBUG] Date.getHours():`, row.calldate.getHours(), 'toISOString():', row.calldate.toISOString());
+        logger.info(`[DEBUG] Date.getHours():`, row.calldate.getHours(), 'toISOString():', row.calldate.toISOString());
       }
-      console.log(`[DEBUG] timeToString result:`, timeToString(row.calldate));
+      logger.info(`[DEBUG] timeToString result:`, timeToString(row.calldate));
     }
     
     return {
@@ -796,7 +917,7 @@ async function getOutboundQueueCallsUltraFast(queueName, startTime, endTime) {
   const totalTime = Date.now() - startTotal;
   
   if (process.env.DEBUG_DB === 'true') {
-    console.log(`[UltraFast Outbound Queue] agents: ${time1}ms, cdr: ${time2}ms, recordings: ${time3}ms, обработка: ${time4}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
+    logger.info(`[UltraFast Outbound Queue] agents: ${time1}ms, cdr: ${time2}ms, recordings: ${time3}ms, обработка: ${time4}ms, всего: ${totalTime}ms, звонков: ${calls.length}`);
   }
   
   return calls;

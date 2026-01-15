@@ -9,6 +9,7 @@
 
 const { execute: dbExecute, getConnection } = require('./db-optimizer');
 const { format } = require('date-fns');
+const logger = require('./logger');
 
 /**
  * Оптимизированный запрос для получения звонков из очереди (для больших данных)
@@ -292,7 +293,7 @@ async function checkCallbacksOptimized(conn, calls, queueName) {
       });
     }
   } catch (error) {
-    console.error('Ошибка при оптимизированной проверке перезвонов:', error);
+    logger.error('Ошибка при оптимизированной проверке перезвонов:', error);
   }
 
   return results;

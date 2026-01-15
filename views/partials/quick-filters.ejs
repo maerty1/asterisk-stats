@@ -1,0 +1,48 @@
+<div class="quick-filters">
+  <!-- Quick Date Filters -->
+  <div class="view-selector-group">
+    <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="today">Сегодня</button>
+    <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="yesterday">Вчера</button>
+    <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="week">Неделя</button>
+    <button type="button" class="view-selector-btn quick-date-filter-btn" data-period="month">Месяц</button>
+  </div>
+  
+  <!-- View Type Selector -->
+  <div class="view-selector-group">
+    <button type="button" class="view-selector-btn <%= typeof viewType === 'undefined' || viewType === 'queue' ? 'active' : '' %>" data-view="queue">
+      <span class="view-selector-icon">📞</span>
+      <span class="view-selector-text">Вх очередь</span>
+    </button>
+    <button type="button" class="view-selector-btn <%= viewType === 'outbound_queue' ? 'active' : '' %>" data-view="outbound_queue">
+      <span class="view-selector-icon">📞</span>
+      <span class="view-selector-text">Исх очереди</span>
+    </button>
+    <button type="button" class="view-selector-btn <%= viewType === 'inbound' ? 'active' : '' %>" data-view="inbound">
+      <span class="view-selector-icon">📥</span>
+      <span class="view-selector-text">Входящие</span>
+    </button>
+    <button type="button" class="view-selector-btn <%= viewType === 'outbound' ? 'active' : '' %>" data-view="outbound">
+      <span class="view-selector-icon">📤</span>
+      <span class="view-selector-text">Исходящие</span>
+    </button>
+    <a href="/rankings" class="view-selector-btn">
+      <span class="view-selector-icon">🏆</span>
+      <span class="view-selector-text">Рейтинг</span>
+    </a>
+  </div>
+  
+  <!-- Action Buttons -->
+  <div class="view-selector-group">
+    <% if (typeof viewType === 'undefined' || viewType === 'queue' || viewType === 'outbound_queue') { %>
+    <button type="button" class="view-selector-btn" id="open-email-modal-btn" title="Email рассылка">
+      <span class="view-selector-icon">📧</span>
+    </button>
+    <% } %>
+    <button type="button" class="view-selector-btn" id="open-settings-modal-btn" title="Настройки">
+      <span class="view-selector-icon">⚙️</span>
+    </button>
+    <button type="button" class="view-selector-btn" id="export-btn" title="Экспорт">
+      <span class="view-selector-icon">📥</span>
+    </button>
+  </div>
+</div>

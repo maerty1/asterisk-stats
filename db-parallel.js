@@ -4,6 +4,7 @@
  */
 
 const { pool, execute: dbExecute, getConnection } = require('./db-optimizer');
+const logger = require('./logger');
 
 // Конфигурация параллелизма
 const PARALLEL_CONFIG = {
@@ -102,7 +103,7 @@ async function getQueueCallsParallel(queueName, startTime, endTime) {
     return getQueueCallsSingle(queueName, startTime, endTime);
   }
   
-  console.log(`[DB Parallel] getQueueCalls: ${chunks.length} чанков для очереди ${queueName}`);
+  logger.info(`[DB Parallel] getQueueCalls: ${chunks.length} чанков для очереди ${queueName}`);
   
   // Создаем функции для параллельного выполнения
   const queryFunctions = chunks.map(chunk => async () => {
@@ -204,7 +205,7 @@ async function getInboundCallsParallel(startTime, endTime, minLength = 4) {
     return getInboundCallsSingle(startTime, endTime, minLength);
   }
   
-  console.log(`[DB Parallel] getInboundCalls: ${chunks.length} чанков`);
+  logger.info(`[DB Parallel] getInboundCalls: ${chunks.length} чанков`);
   
   const queryFunctions = chunks.map(chunk => async () => {
     return getInboundCallsSingle(chunk.start, chunk.end, minLength);
@@ -288,7 +289,7 @@ async function getOutboundCallsParallel(startTime, endTime, minLength = 4) {
     return getOutboundCallsSingle(startTime, endTime, minLength);
   }
   
-  console.log(`[DB Parallel] getOutboundCalls: ${chunks.length} чанков`);
+  logger.info(`[DB Parallel] getOutboundCalls: ${chunks.length} чанков`);
   
   const queryFunctions = chunks.map(chunk => async () => {
     return getOutboundCallsSingle(chunk.start, chunk.end, minLength);
@@ -379,7 +380,7 @@ async function checkCallbacksParallel(calls, queueName, checkFunction) {
     return checkFunction(pool, calls, queueName);
   }
   
-  console.log(`[DB Parallel] checkCallbacks: разбиваем ${calls.length} звонков на чанки`);
+  logger.info(`[DB Parallel] checkCallbacks: разбиваем ${calls.length} звонков на чанки`);
   
   // Разбиваем на чанки
   const chunks = chunkArray(calls, PARALLEL_CONFIG.BATCH_CHUNK_SIZE);
@@ -423,7 +424,7 @@ async function executeWithUnion(baseQuery, conditions) {
       const [rows] = await dbExecute(fullQuery, params);
       return rows;
     } catch (error) {
-      console.error('[DB Parallel] UNION query error:', error.message);
+      logger.error('[DB Parallel] UNION query error:', error.message);
       return [];
     }
   });

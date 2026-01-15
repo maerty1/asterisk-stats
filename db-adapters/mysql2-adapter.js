@@ -4,6 +4,7 @@
 
 const mysql = require('mysql2/promise');
 const BaseAdapter = require('./base-adapter');
+const logger = require('../logger');
 
 class Mysql2Adapter extends BaseAdapter {
   constructor(config) {
@@ -19,16 +20,13 @@ class Mysql2Adapter extends BaseAdapter {
       waitForConnections: true,
       enableKeepAlive: true,
       keepAliveInitialDelay: 0,
-      acquireTimeout: 60000,
-      timeout: 60000,
       multipleStatements: false,
       dateStrings: true, // ВАЖНО: возвращать даты как строки (данные в БД уже в локальном времени)
       supportBigNumbers: true,
       bigNumberStrings: false,
-      typeCast: true,
-      reconnect: true,
-      maxReconnects: 10,
-      reconnectDelay: 2000
+      typeCast: true
+      // Примечание: опции timeout, reconnect, maxReconnects, reconnectDelay удалены
+      // т.к. они не поддерживаются в mysql2 3.x (используйте enableKeepAlive вместо этого)
     };
 
     this.pool = mysql.createPool(this.DB_CONFIG);
@@ -36,9 +34,9 @@ class Mysql2Adapter extends BaseAdapter {
 
     // Обработка ошибок пула
     this.pool.on('error', (err) => {
-      console.error('Ошибка пула соединений MySQL:', err);
+      logger.error('Ошибка пула соединений MySQL:', err);
       if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-        console.log('Переподключение к базе данных...');
+        logger.info('Переподключение к базе данных...');
       }
     });
   }
@@ -51,13 +49,13 @@ class Mysql2Adapter extends BaseAdapter {
       
       if (process.env.DEBUG_DB === 'true') {
         const duration = Date.now() - startTime;
-        console.log(`[DB MySQL2] ${duration}ms: ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
+        logger.info(`[DB MySQL2] ${duration}ms: ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
       }
       
       return [rows, fields];
     } catch (error) {
-      console.error('[DB Error MySQL2]', error.message);
-      console.error('[SQL]', sql.substring(0, 200));
+      logger.error('[DB Error MySQL2]', error.message);
+      logger.error('[SQL]', sql.substring(0, 200));
       throw error;
     }
   }
@@ -70,13 +68,13 @@ class Mysql2Adapter extends BaseAdapter {
       
       if (process.env.DEBUG_DB === 'true') {
         const duration = Date.now() - startTime;
-        console.log(`[DB Query MySQL2] ${duration}ms: ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
+        logger.info(`[DB Query MySQL2] ${duration}ms: ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
       }
       
       return [rows, fields];
     } catch (error) {
-      console.error('[DB Query Error MySQL2]', error.message);
-      console.error('[SQL]', sql.substring(0, 200));
+      logger.error('[DB Query Error MySQL2]', error.message);
+      logger.error('[SQL]', sql.substring(0, 200));
       throw error;
     }
   }

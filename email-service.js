@@ -9,6 +9,7 @@ const path = require('path');
 const os = require('os');
 // Используем settings-db.js вместо sqlite-email-db.js, так как он уже инициализирован
 const settingsDb = require('./settings-db');
+const logger = require('./logger');
 
 // Конфигурация SMTP
 const createTransporter = () => {
@@ -358,7 +359,7 @@ async function sendDailyReport(reportData) {
   const transporter = createTransporter();
   
   if (!transporter) {
-    console.log('📧 Email отправка отключена (нет конфигурации SMTP)');
+    logger.info('📧 Email отправка отключена (нет конфигурации SMTP)');
     return { success: false, error: 'SMTP not configured' };
   }
 
@@ -383,12 +384,12 @@ async function sendDailyReport(reportData) {
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log('✅ Email отчет успешно отправлен:', info.messageId);
-    console.log('📧 Получатели:', recipientList.join(', '));
+    logger.info('✅ Email отчет успешно отправлен:', info.messageId);
+    logger.info('📧 Получатели:', recipientList.join(', '));
     
     return { success: true, messageId: info.messageId };
   } catch (error) {
-    console.error('❌ Ошибка отправки email отчета:', error);
+    logger.error('❌ Ошибка отправки email отчета:', error);
     return { success: false, error: error.message };
   }
 }
@@ -533,7 +534,7 @@ async function generateDailyReport(pool, date, callFunctions) {
 
     return reportData;
   } catch (error) {
-    console.error('Ошибка генерации ежедневного отчета:', error);
+    logger.error('Ошибка генерации ежедневного отчета:', error);
     throw error;
   }
 }
@@ -1201,7 +1202,7 @@ async function generateQueueReport(pool, queueName, date, startTimeUTC, endTimeU
       dateRange: dateRange // Диапазон дат для Excel заголовка
     };
   } catch (error) {
-    console.error('Ошибка генерации отчета для очереди:', error);
+    logger.error('Ошибка генерации отчета для очереди:', error);
     throw error;
   }
 }
@@ -1211,7 +1212,7 @@ async function sendQueueReport(reportData, queueName, pool) {
   const transporter = createTransporter();
   
   if (!transporter) {
-    console.log('📧 Email отправка отключена (нет конфигурации SMTP)');
+    logger.info('📧 Email отправка отключена (нет конфигурации SMTP)');
     return { success: false, error: 'SMTP not configured' };
   }
 
@@ -1224,7 +1225,7 @@ async function sendQueueReport(reportData, queueName, pool) {
     `, [queueName]);
 
     if (!emailRows || emailRows.length === 0) {
-      console.log(`📧 Нет активных email адресов для очереди ${queueName}`);
+      logger.info(`📧 Нет активных email адресов для очереди ${queueName}`);
       return { success: false, error: 'No active email addresses for this queue' };
     }
 
@@ -1276,10 +1277,10 @@ async function sendQueueReport(reportData, queueName, pool) {
             filename: `Входящие_звонки_${queueName}_${dateRange.replace(/\./g, '_')}.xlsx`,
             content: excelBuffer
           });
-          console.log(`📊 Excel файл со списком звонков создан для очереди ${queueName}`);
+          logger.info(`📊 Excel файл со списком звонков создан для очереди ${queueName}`);
         }
       } catch (excelError) {
-        console.error('❌ Ошибка генерации Excel файла:', excelError);
+        logger.error('❌ Ошибка генерации Excel файла:', excelError);
         // Продолжаем отправку email даже если Excel не удалось создать
       }
     }
@@ -1294,15 +1295,15 @@ async function sendQueueReport(reportData, queueName, pool) {
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Email отчет для очереди ${queueName} успешно отправлен:`, info.messageId);
-    console.log('📧 Получатели:', recipientList.join(', '));
+    logger.info(`✅ Email отчет для очереди ${queueName} успешно отправлен:`, info.messageId);
+    logger.info('📧 Получатели:', recipientList.join(', '));
     if (attachments.length > 0) {
-      console.log('📎 Прикреплен Excel файл со списком звонков');
+      logger.info('📎 Прикреплен Excel файл со списком звонков');
     }
     
     return { success: true, messageId: info.messageId, recipients: recipientList };
   } catch (error) {
-    console.error('❌ Ошибка отправки email отчета для очереди:', error);
+    logger.error('❌ Ошибка отправки email отчета для очереди:', error);
     return { success: false, error: error.message };
   }
 }

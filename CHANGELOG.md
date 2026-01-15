@@ -5,6 +5,41 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.1.0] - 2026-01-15
+
+### Изменено
+- **Рефакторинг**: Разбит `app.js` на модули (routes/settings.js, routes/email-reports.js, routes/rankings.js, routes/health.js)
+- **Логирование**: Заменены все `console.log/error` на Winston logger в backend файлах
+- **Очистка**: Удалены неиспользуемые зависимости (13 пакетов, экономия ~96MB)
+- **Очистка**: Удалены неиспользуемые адаптеры БД (6 файлов)
+- **Очистка**: Удалены дублирующиеся файлы sqlite-email-db.js
+- **Структура**: SQL скрипты перемещены в папку `sql/`
+- **Конфиг**: Исправлены deprecated опции mysql2
+
+### Исправлено
+- Исправлен TODO: добавлена фильтрация по очереди для всех методов получения входящих звонков
+- Исправлена ошибка "too many placeholders" при больших выборках (batch processing)
+- Исправлена формула расчета "Не обработано" в рейтинге
+
+### Добавлено
+- **Swagger API Docs**: Интерактивная документация `/api/docs/`
+- **Prometheus метрики**: Endpoint `/api/metrics` с HTTP, DB, calls метриками
+- **Health Check**: `/api/health`, `/api/health/live`, `/api/health/ready`
+- **Docker**: Dockerfile, docker-compose.yml, .dockerignore
+- **CI/CD**: GitHub Actions workflow (.github/workflows/ci.yml)
+- **Сравнение периодов**: API `/api/comparison` для сравнения неделя к неделе, месяц к месяцу
+- **i18n**: Многоязычность интерфейса (RU/EN) через `/api/i18n`
+- **WebSocket**: Real-time обновления статистики через Socket.IO
+- **Grafana дашборд**: JSON шаблон в `/grafana/asterisk-stats-dashboard.json`
+- Cursor Rules для проекта (.cursor/rules/)
+- Partials для EJS шаблонов (views/partials/)
+- Фильтрация по рабочим часам (настраивается в модальном окне)
+- Сохранение выбранных дат между страницами (sessionStorage)
+
+### Безопасность
+- Удалены уязвимые зависимости (sequelize с SQL injection)
+- ⚠️ xlsx имеет известные уязвимости без патча (используется только для экспорта)
+
 ## [1.0.0] - 2025-12-24
 
 ### Добавлено
