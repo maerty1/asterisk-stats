@@ -1,8 +1,12 @@
 // ===================== ПРОСТОЙ МЕНЕДЖЕР ТАБЛИЦЫ ЗВОНКОВ =====================
 
+// Режим отладки
+const DEBUG = localStorage.getItem('DEBUG') === 'true';
+const debugLog = (...args) => DEBUG && debugLog('', ...args);
+
 class SimpleCallsTable {
   constructor() {
-    console.log('[SimpleCallsTable] Инициализация...');
+    debugLog('Инициализация...');
     this.calls = [];
     this.filteredCalls = [];
     this.currentPage = 1;
@@ -12,7 +16,7 @@ class SimpleCallsTable {
   }
 
   init() {
-    console.log('[SimpleCallsTable] Загрузка данных...');
+    debugLog(' Загрузка данных...');
     
     // Находим элементы
     const dataElement = document.getElementById('calls-data');
@@ -31,10 +35,10 @@ class SimpleCallsTable {
     // Загружаем данные
     try {
       const dataStr = dataElement.getAttribute('data-calls');
-      console.log('[SimpleCallsTable] Данные получены, длина:', dataStr?.length);
+      debugLog(' Данные получены, длина:', dataStr?.length);
       
       if (!dataStr || dataStr === '[]' || dataStr === '') {
-        console.log('[SimpleCallsTable] Нет данных для отображения');
+        debugLog(' Нет данных для отображения');
         tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Нет данных для отображения</td></tr>';
         return;
       }
@@ -42,7 +46,7 @@ class SimpleCallsTable {
       this.calls = JSON.parse(dataStr);
       this.filteredCalls = [...this.calls];
       
-      console.log('[SimpleCallsTable] Загружено звонков:', this.calls.length);
+      debugLog(' Загружено звонков:', this.calls.length);
       
       if (this.calls.length === 0) {
         tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Нет данных для отображения</td></tr>';
@@ -178,7 +182,7 @@ class SimpleCallsTable {
   }
 
   render() {
-    console.log('[SimpleCallsTable] Рендеринг таблицы...');
+    debugLog(' Рендеринг таблицы...');
     const tableBody = document.getElementById('calls-table-body');
     if (!tableBody) {
       console.error('[SimpleCallsTable] tableBody не найден!');
@@ -189,7 +193,7 @@ class SimpleCallsTable {
     const endIndex = startIndex + this.itemsPerPage;
     const pageData = this.filteredCalls.slice(startIndex, endIndex);
     
-    console.log('[SimpleCallsTable] Отображаем страницу', this.currentPage, 'записей:', pageData.length);
+    debugLog(' Отображаем страницу', this.currentPage, 'записей:', pageData.length);
     
     if (pageData.length === 0) {
       tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Нет данных для отображения</td></tr>';
@@ -201,7 +205,7 @@ class SimpleCallsTable {
     const rows = pageData.map(call => this.createRow(call)).join('');
     tableBody.innerHTML = rows;
     
-    console.log('[SimpleCallsTable] Таблица отрисована, строк:', tableBody.children.length);
+    debugLog(' Таблица отрисована, строк:', tableBody.children.length);
     
     this.updatePagination();
   }
@@ -282,7 +286,7 @@ class SimpleCallsTable {
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
-  console.log('[SimpleCallsTable] DOM загружен, инициализация таблицы...');
+  debugLog(' DOM загружен, инициализация таблицы...');
   window.callsTable = new SimpleCallsTable();
 });
 

@@ -66,7 +66,7 @@ const logger = require('../logger');
  *       500:
  *         description: Ошибка сервера
  */
-router.post('/', async (req, res) => {
+router.post('/rankings', async (req, res) => {
   try {
     const start_date = req.body.start_date;
     const end_date = req.body.end_date;
@@ -149,7 +149,7 @@ router.post('/', async (req, res) => {
  *       500:
  *         description: Ошибка сервера
  */
-router.post('/export-excel', async (req, res) => {
+router.post('/export-rankings-excel', async (req, res) => {
   try {
     const { start_date, end_date, sortBy, departmentFilter } = req.body;
     

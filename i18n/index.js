@@ -1,8 +1,15 @@
 /**
  * Модуль интернационализации (i18n)
  * Поддержка русского и английского языков
+ * @module i18n
  */
 
+/**
+ * @typedef {import('../types').SupportedLocale} SupportedLocale
+ * @typedef {import('../types').TranslateFunction} TranslateFunction
+ */
+
+/** @type {Record<SupportedLocale, Object>} */
 const translations = {
   ru: require('./ru.json'),
   en: require('./en.json')

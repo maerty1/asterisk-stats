@@ -1,6 +1,14 @@
 /**
  * WebSocket модуль для real-time обновлений
  * Использует Socket.IO для двусторонней связи
+ * @module websocket
+ */
+
+/**
+ * @typedef {import('./types').RealTimeQueueStats} RealTimeQueueStats
+ * @typedef {import('./types').SystemStatus} SystemStatus
+ * @typedef {import('socket.io').Server} SocketIOServer
+ * @typedef {import('socket.io').Socket} Socket
  */
 
 const { Server } = require('socket.io');

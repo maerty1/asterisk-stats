@@ -1,7 +1,21 @@
-// Helper functions for Asterisk queue analysis
+/**
+ * Helper functions for Asterisk queue analysis
+ * @module helpers
+ */
+
 const { format } = require('date-fns');
 
+/**
+ * @typedef {import('./types').QueueCall} QueueCall
+ * @typedef {import('./types').CallbackStatus} CallbackStatus
+ */
+
 const helpers = {
+  /**
+   * Перевести статус звонка в читаемый вид с иконкой
+   * @param {string} status - Статус звонка
+   * @returns {string} HTML строка со статусом
+   */
   translateStatus: (status) => {
     const statusMap = {
       'completed_by_caller': '<i class="bi bi-telephone-outbound-fill me-1"></i> Завершен клиентом',
@@ -11,6 +25,11 @@ const helpers = {
     return statusMap[status] || status;
   },
 
+  /**
+   * Рассчитать время ожидания звонка в очереди
+   * @param {QueueCall} call - Объект звонка
+   * @returns {number|string} Время ожидания в секундах или '-'
+   */
   calculateWaitTime: (call) => {
     if (!call.startTime) return '-';
     const endTime = call.connectTime || call.endTime;

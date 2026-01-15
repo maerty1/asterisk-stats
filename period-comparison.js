@@ -1,6 +1,14 @@
 /**
  * Модуль сравнения периодов
  * Позволяет сравнивать статистику между двумя периодами
+ * @module period-comparison
+ */
+
+/**
+ * @typedef {import('./types').ComparisonPeriod} ComparisonPeriod
+ * @typedef {import('./types').MetricChange} MetricChange
+ * @typedef {import('./types').StatsComparison} StatsComparison
+ * @typedef {import('./types').QueueStats} QueueStats
  */
 
 const logger = require('./logger');

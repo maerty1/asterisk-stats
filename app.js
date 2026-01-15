@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
 const { exec } = require('child_process');
 const logger = require('./logger');
 
@@ -55,7 +56,7 @@ const {
 const settingsDb = require('./settings-db');
 
 // Роутеры
-const { settingsRouter, emailReportsRouter, rankingsRouter, healthRouter, comparisonRouter } = require('./routes');
+const { settingsRouter, emailReportsRouter, rankingsRouter, healthRouter, comparisonRouter, viewsRouter, initViewsRouter } = require('./routes');
 
 // Swagger документация
 const { setupSwagger } = require('./swagger');
@@ -206,11 +207,21 @@ const QUEUES_CACHE_TTL = parseInt(process.env.QUEUES_CACHE_TTL) || 3600000; // 1
 let queueNamesCache = {}; // Кэш названий очередей: { "1049": "Название очереди" }
 let queueNamesCacheTime = 0;
 
+// Rate Limiting для API
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 минут
+  max: 100, // 100 запросов на IP за 15 минут
+  message: { success: false, error: 'Слишком много запросов, попробуйте позже' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // Middleware
 app.use(compression()); // Сжатие gzip
 app.use(metricsMiddleware); // Prometheus метрики HTTP
 app.use(cookieParser()); // Парсинг cookies
 app.use(i18nMiddleware); // i18n многоязычность
+app.use('/api/', apiLimiter); // Rate limiting для API
 app.set('view engine', 'ejs');
 app.set('view cache', false); // Отключаем кэширование шаблонов
 app.use(express.json()); // Для JSON запросов
@@ -253,6 +264,7 @@ app.use('/api/email-reports', emailReportsRouter);
 app.use('/api/health', healthRouter);
 app.use('/api/comparison', comparisonRouter);
 app.use('/api/i18n', i18nRouter);
+app.use('/', rankingsRouter); // POST /rankings, POST /export-rankings-excel
 
 // Swagger API документация
 setupSwagger(app);
@@ -579,75 +591,11 @@ function getFilterParams(req) {
   };
 }
 
-app.get('/', (req, res) => {
-  const params = getFilterParams(req);
-  res.render('index', { 
-    title: 'Аналитика звонков',
-    queues: getAvailableQueues(),
-    results: null,
-    startDate: params.startDate,
-    endDate: params.endDate,
-    selectedQueue: params.selectedQueue,
-    viewType: 'queue',
-    helpers
-  });
-});
+// Инициализация viewsRouter с зависимостями
+initViewsRouter({ getFilterParams, getAvailableQueues });
 
-app.get('/inbound', (req, res) => {
-  const params = getFilterParams(req);
-  res.render('index', { 
-    title: 'Входящие звонки - Asterisk Analytics',
-    queues: getAvailableQueues(),
-    results: null,
-    startDate: params.startDate,
-    endDate: params.endDate,
-    selectedQueue: params.selectedQueue,
-    viewType: 'inbound',
-    helpers
-  });
-});
-
-app.get('/outbound-queue', (req, res) => {
-  const params = getFilterParams(req);
-  res.render('index', { 
-    title: 'Исходящие очереди - Asterisk Analytics',
-    queues: getAvailableQueues(),
-    results: null,
-    startDate: params.startDate,
-    endDate: params.endDate,
-    selectedQueue: params.selectedQueue,
-    viewType: 'outbound_queue',
-    helpers
-  });
-});
-
-app.get('/outbound', (req, res) => {
-  const params = getFilterParams(req);
-  res.render('index', { 
-    title: 'Исходящие звонки - Asterisk Analytics',
-    queues: getAvailableQueues(),
-    results: null,
-    startDate: params.startDate,
-    endDate: params.endDate,
-    selectedQueue: params.selectedQueue,
-    viewType: 'outbound',
-    helpers
-  });
-});
-
-app.get('/rankings', (req, res) => {
-  const params = getFilterParams(req);
-  res.render('rankings', { 
-    title: 'Рейтинг очередей - Asterisk Analytics',
-    queues: getAvailableQueues(),
-    results: null,
-    startDate: params.startDate,
-    endDate: params.endDate,
-    sortBy: req.query.sortBy || 'composite',
-    departmentFilter: req.query.departmentFilter || '',
-    helpers
-  });
-});
+// GET страницы - см. routes/views.js
+app.use('/', viewsRouter);
 
 // ==========================================
 // API для управления настройками и email - см. routes/settings.js и routes/email-reports.js
@@ -1026,132 +974,7 @@ app.post('/report', async (req, res) => {
   }
 });
 
-app.post('/rankings', async (req, res) => {
-  try {
-    // Обрабатываем как JSON или как form-data
-    const start_date = req.body.start_date;
-    const end_date = req.body.end_date;
-    const sortBy = req.body.sortBy;
-    const departmentFilter = req.body.departmentFilter || null;
-    
-    if (!start_date || !end_date) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Необходимо указать start_date и end_date' 
-      });
-    }
-    
-    const startTime = `${start_date} 00:00:00`;
-    const endTime = `${end_date} 23:59:59`;
-    const sortCriteria = sortBy || 'composite';
-    
-    logger.info(`[Rankings] Запрос рейтинга: ${startTime} - ${endTime}, критерий: ${sortCriteria}, отдел: ${departmentFilter || 'все'}`);
-    
-    const rankings = await getQueueRankings(startTime, endTime, sortCriteria, departmentFilter);
-    
-    logger.info(`[Rankings] Найдено очередей: ${rankings.length}`);
-    
-    res.json({
-      success: true,
-      rankings,
-      period: {
-        start: start_date,
-        end: end_date
-      },
-      sortBy: sortCriteria,
-      departmentFilter: departmentFilter || null
-    });
-  } catch (error) {
-    logger.error('Ошибка при получении рейтинга:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Экспорт рейтинга в Excel
-app.post('/export-rankings-excel', async (req, res) => {
-  try {
-    const XLSX = require('xlsx');
-    const { start_date, end_date, sortBy, departmentFilter } = req.body;
-    
-    if (!start_date || !end_date) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Необходимо указать start_date и end_date' 
-      });
-    }
-    
-    const startTime = `${start_date} 00:00:00`;
-    const endTime = `${end_date} 23:59:59`;
-    const sortCriteria = sortBy || 'composite';
-    
-    const rankings = await getQueueRankings(startTime, endTime, sortCriteria, departmentFilter || null);
-    
-    // Подготовка данных для Excel
-    const excelData = rankings.map((queue, index) => ({
-      'Ранг': queue.rank,
-      'Очередь': queue.queueName,
-      'Название': queue.queueDisplayName.replace(/^\d+\s*\(|\)$/g, '').replace(/^\d+\s*/, ''),
-      'Отдел': queue.department || 'Не указан',
-      'Всего звонков': queue.totalCalls,
-      'Отвечено': queue.answeredCalls,
-      'Процент ответа (%)': queue.answerRate,
-      'SLA (%)': queue.slaRate,
-      'Пропущено': queue.abandonedCalls,
-      'Процент пропущенных (%)': queue.abandonRate,
-      'ASA (сек)': queue.asa,
-      'Комплексный рейтинг': queue.compositeScore.toFixed(1),
-      'Перезвонил сам': queue.clientCallbacks || 0,
-      'Перезвонили мы': queue.agentCallbacks || 0,
-      'Не обработан': queue.noCallbacks || 0
-    }));
-    
-    // Создание книги Excel
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
-    
-    // Настройка ширины столбцов
-    const colWidths = [
-      { wch: 6 },  // Ранг
-      { wch: 12 }, // Очередь
-      { wch: 30 }, // Название
-      { wch: 15 }, // Отдел
-      { wch: 12 }, // Всего звонков
-      { wch: 10 }, // Отвечено
-      { wch: 15 }, // Процент ответа
-      { wch: 10 }, // SLA
-      { wch: 12 }, // Пропущено
-      { wch: 20 }, // Процент пропущенных
-      { wch: 12 }, // ASA
-      { wch: 18 }, // Комплексный рейтинг
-      { wch: 14 }, // Перезвонил сам
-      { wch: 14 }, // Перезвонили мы
-      { wch: 12 }  // Не обработан
-    ];
-    ws['!cols'] = colWidths;
-    
-    XLSX.utils.book_append_sheet(wb, ws, 'Рейтинг очередей');
-    
-    // Генерация файла
-    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    
-    const filename = `Рейтинг_очередей_${start_date}_${end_date}.xlsx`;
-    // UTF-8 кодировка для современных браузеров (RFC 5987)
-    const filenameUTF8 = encodeURIComponent(filename);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    // Используем только filename* для UTF-8 (RFC 5987)
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filenameUTF8}`);
-    res.send(buffer);
-  } catch (error) {
-    logger.error('Ошибка при экспорте рейтинга в Excel:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
+// POST /rankings и POST /export-rankings-excel - см. routes/rankings.js
 
 // Экспорт отчета в Excel
 app.post('/export-report-excel', async (req, res) => {

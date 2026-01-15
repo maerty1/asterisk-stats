@@ -1,0 +1,42 @@
+<!-- Email Management Modal -->
+<div id="email-modal" class="modal" style="display: none;">
+  <div class="modal-overlay" id="email-modal-overlay"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 class="modal-title">📧 Управление email рассылкой</h2>
+      <button type="button" class="modal-close" id="close-email-modal" aria-label="Закрыть">
+        <span>×</span>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom: var(--md-spacing-lg);">
+        <label for="modal-email-queue-select" class="form-label">Очередь:</label>
+        <select id="modal-email-queue-select" class="form-input">
+          <% if (queues && queues.length > 0) { %>
+            <% queues.forEach(queue => { %>
+              <option value="<%= queue %>" <%= queue === selectedQueue ? 'selected' : '' %>><%= typeof helpers !== 'undefined' && helpers.formatQueueName ? helpers.formatQueueName(queue) : queue %></option>
+            <% }); %>
+          <% } else { %>
+            <option value="">Загрузка...</option>
+          <% } %>
+        </select>
+      </div>
+      <div style="display: flex; gap: var(--md-spacing-sm); margin-bottom: var(--md-spacing-lg); align-items: flex-end;">
+        <div style="flex: 1;">
+          <label for="modal-email-input" class="form-label">Email адрес:</label>
+          <input type="email" id="modal-email-input" class="form-input" placeholder="example@company.com">
+        </div>
+        <button type="button" class="export-btn" id="modal-add-email-btn" style="white-space: nowrap;">
+          <span class="btn-icon">➕</span>
+          <span>Добавить</span>
+        </button>
+      </div>
+      <div id="modal-email-list" style="max-height: 400px; overflow-y: auto;">
+        <!-- Список email адресов будет загружен через JavaScript -->
+        <div style="text-align: center; color: var(--md-sys-color-on-surface-variant); padding: var(--md-spacing-md);">
+          Выберите очередь для просмотра email адресов
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

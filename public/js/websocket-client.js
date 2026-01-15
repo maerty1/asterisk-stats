@@ -2,6 +2,10 @@
  * WebSocket клиент для real-time обновлений
  */
 
+// Режим отладки WebSocket
+const WS_DEBUG = localStorage.getItem('DEBUG') === 'true';
+const wsLog = (...args) => WS_DEBUG && console.log('[WebSocket]', ...args);
+
 class RealTimeClient {
   constructor(options = {}) {
     this.socket = null;
@@ -61,7 +65,7 @@ class RealTimeClient {
     });
 
     this.socket.on('connect', () => {
-      console.log('[WebSocket] Подключено');
+      wsLog('Подключено');
       this.connected = true;
       this.reconnectAttempts = 0;
       this.onConnect();
@@ -73,7 +77,7 @@ class RealTimeClient {
     });
 
     this.socket.on('disconnect', (reason) => {
-      console.log('[WebSocket] Отключено:', reason);
+      wsLog('Отключено:', reason);
       this.connected = false;
       this.onDisconnect(reason);
     });

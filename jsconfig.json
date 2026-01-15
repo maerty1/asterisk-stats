@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2020",
+    "checkJs": true,
+    "strict": false,
+    "baseUrl": ".",
+    "paths": {
+      "*": ["./*"]
+    },
+    "typeRoots": ["./types", "./node_modules/@types"]
+  },
+  "include": [
+    "*.js",
+    "routes/**/*.js",
+    "i18n/**/*.js",
+    "db-adapters/**/*.js",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "public/js"
+  ]
+}

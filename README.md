@@ -418,6 +418,49 @@ asterisk-stats/
 npm run dev  # С автоперезагрузкой при изменениях
 ```
 
+### Тестирование
+
+```bash
+# Запуск всех тестов
+npm test
+
+# Запуск тестов с отслеживанием изменений
+npm run test:watch
+
+# Запуск тестов с отчетом о покрытии
+npm run test:coverage
+```
+
+**Структура тестов:**
+
+```
+tests/
+├── setup.js              # Настройка тестового окружения
+├── api/
+│   └── health.test.js    # Тесты Health API
+└── unit/
+    ├── helpers.test.js         # Тесты хелперов
+    ├── i18n.test.js            # Тесты i18n
+    ├── period-comparison.test.js  # Тесты сравнения периодов
+    └── stats-calculator.test.js   # Тесты калькулятора статистики
+```
+
+### Линтинг и форматирование
+
+```bash
+# Проверка ESLint
+npm run lint
+
+# Автоисправление ESLint
+npm run lint:fix
+
+# Форматирование Prettier
+npm run format
+
+# Проверка форматирования
+npm run format:check
+```
+
 ### Структура данных
 
 #### Таблица `cdr`

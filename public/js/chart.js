@@ -1,10 +1,20 @@
-// Тест функции getRecordingLink
-console.log('=== CHART.JS LOADED ===');
-console.log('Testing getRecordingLink:');
-const testFile = 'in-8412450020-79022036068-20251213-151913-1765628353.31074.mp3';
-const testLink = `/recordings/${testFile.split('-')[3].substring(0, 4)}/${testFile.split('-')[3].substring(4, 6)}/${testFile.split('-')[3].substring(6, 8)}?file=${encodeURIComponent(testFile)}`;
-console.log('Expected URL:', testLink);
-console.log('Current timestamp:', Date.now());
+/**
+ * Chart.js - Главный модуль управления графиками и таблицами
+ * @module chart
+ * 
+ * Зависимости (загружаются из /js/modules/):
+ * - notification-manager.js - Уведомления
+ * - animation-manager.js - Анимации
+ * - export-utils.js - Экспорт CSV/JSON
+ */
+
+// Режим отладки (включается через localStorage.setItem('DEBUG', 'true'))
+const DEBUG = localStorage.getItem('DEBUG') === 'true';
+const debugLog = (...args) => DEBUG && console.log('[Chart]', ...args);
+
+// Ссылки на глобальные менеджеры (будут перезаписаны если модули не загружены)
+let notificationManager = window.notificationManager;
+let animationManager = window.animationManager;
 
 // Класс для управления графиками
 class ChartManager {
@@ -169,8 +179,11 @@ class NotificationManager {
   }
 }
 
-// Глобальный менеджер уведомлений
-const notificationManager = new NotificationManager();
+// Используем модуль если загружен, иначе создаем локальный экземпляр
+if (!notificationManager) {
+  notificationManager = new NotificationManager();
+  window.notificationManager = notificationManager;
+}
 
 // Анимации и эффекты
 class AnimationManager {
@@ -308,8 +321,11 @@ class AnimationManager {
   }
 }
 
-// Глобальный менеджер анимаций
-const animationManager = new AnimationManager();
+// Используем модуль если загружен, иначе создаем локальный экземпляр
+if (!animationManager) {
+  animationManager = new AnimationManager();
+  window.animationManager = animationManager;
+}
 
 // Функция для отображения загрузочного состояния
 function showLoadingState(form) {
@@ -540,7 +556,7 @@ class CallsTableManager {
 
     // Очищаем tbody, если там уже есть данные от EJS
     if (this.tableBody && this.tableBody.children.length > 0) {
-      console.log('Очищаем существующие данные из tbody');
+      debugLog('Очищаем существующие данные из tbody');
       this.tableBody.innerHTML = '';
     }
 
@@ -557,13 +573,13 @@ class CallsTableManager {
       this.calls = JSON.parse(callsData);
       this.filteredCalls = [...this.calls];
       
-      console.log('✅ Данные загружены. Всего звонков:', this.calls.length);
+      debugLog('✅ Данные загружены. Всего звонков:', this.calls.length);
       
       // Отладка: проверяем наличие recordingFile
       const callsWithRecording = this.calls.filter(c => c.recordingFile);
-      console.log('Звонков с записью:', callsWithRecording.length);
+      debugLog('Звонков с записью:', callsWithRecording.length);
       if (callsWithRecording.length > 0) {
-        console.log('Пример записи:', callsWithRecording[0].recordingFile);
+        debugLog('Пример записи:', callsWithRecording[0].recordingFile);
       }
       
       if (this.calls.length === 0) {
@@ -764,11 +780,11 @@ class CallsTableManager {
       return;
     }
 
-    console.log('renderTable вызвана, calls:', this.calls.length, 'filteredCalls:', this.filteredCalls.length);
+    debugLog('renderTable вызвана, calls:', this.calls.length, 'filteredCalls:', this.filteredCalls.length);
     const startIndex = (this.currentPage - 1) * this.itemsPerPage;
     const endIndex = startIndex + this.itemsPerPage;
     const pageData = this.filteredCalls.slice(startIndex, endIndex);
-    console.log('pageData length:', pageData.length);
+    debugLog('pageData length:', pageData.length);
 
     if (pageData.length === 0) {
       this.tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">Нет данных, соответствующих фильтрам</td></tr>';
@@ -809,13 +825,13 @@ class CallsTableManager {
   }
 
   initializeAudioPlayers() {
-    console.log('initializeAudioPlayers вызвана');
+    debugLog('initializeAudioPlayers вызвана');
     // Находим все ячейки с аудио
     const audioCells = this.tableBody.querySelectorAll('td.audio-cell[data-recording]');
-    console.log('Найдено audio ячеек:', audioCells.length);
+    debugLog('Найдено audio ячеек:', audioCells.length);
 
     audioCells.forEach((cell, index) => {
-      console.log('Обрабатываем ячейку', index, 'с recording:', cell.getAttribute('data-recording'));
+      debugLog('Обрабатываем ячейку', index, 'с recording:', cell.getAttribute('data-recording'));
       const recordingFile = cell.getAttribute('data-recording');
       const status = cell.getAttribute('data-status');
       
@@ -852,8 +868,8 @@ class CallsTableManager {
         return;
       }
 
-      console.log('Создаю audio элемент для:', recordingFile, 'URL:', recordingUrl);
-      console.log('Проверяем URL формат:', recordingUrl.match(/^\/recordings\/\d{4}\/\d{2}\/\d{2}\?file=.+$/));
+      debugLog('Создаю audio элемент для:', recordingFile, 'URL:', recordingUrl);
+      debugLog('Проверяем URL формат:', recordingUrl.match(/^\/recordings\/\d{4}\/\d{2}\/\d{2}\?file=.+$/));
       
       // Создаем audio элемент через DOM API
       const audio = document.createElement('audio');
@@ -907,24 +923,24 @@ class CallsTableManager {
 
       // Обработка успешной загрузки метаданных
       audio.addEventListener('loadedmetadata', () => {
-        console.log('Метаданные загружены для:', recordingUrl);
+        debugLog('Метаданные загружены для:', recordingUrl);
       });
 
       // Обработка начала загрузки
       audio.addEventListener('loadstart', () => {
-        console.log('Начало загрузки:', recordingUrl);
+        debugLog('Начало загрузки:', recordingUrl);
       });
 
       // Обработка готовности к воспроизведению
       audio.addEventListener('canplay', () => {
-        console.log('Аудио готово к воспроизведению:', recordingUrl);
+        debugLog('Аудио готово к воспроизведению:', recordingUrl);
         // Убеждаемся, что controls активны
         audio.controls = true;
       });
       
       // Обработка полной готовности к воспроизведению
       audio.addEventListener('canplaythrough', () => {
-        console.log('Аудио полностью готово к воспроизведению:', recordingUrl);
+        debugLog('Аудио полностью готово к воспроизведению:', recordingUrl);
         audio.controls = true;
       });
       
@@ -935,7 +951,7 @@ class CallsTableManager {
           const duration = audio.duration;
           if (duration > 0) {
             const percentLoaded = (bufferedEnd / duration) * 100;
-            console.log('Загружено:', percentLoaded.toFixed(1) + '%');
+            debugLog('Загружено:', percentLoaded.toFixed(1) + '%');
           }
         }
       });
@@ -950,7 +966,7 @@ class CallsTableManager {
       cell.appendChild(audio);
       
       // Проверяем готовность элемента
-      console.log('Audio элемент создан:', {
+      debugLog('Audio элемент создан:', {
         src: source.src,
         readyState: audio.readyState,
         networkState: audio.networkState,
@@ -971,7 +987,7 @@ class CallsTableManager {
         
         // Проверяем через небольшую задержку
         setTimeout(() => {
-          console.log('Состояние audio после загрузки:', {
+          debugLog('Состояние audio после загрузки:', {
             readyState: audio.readyState,
             networkState: audio.networkState,
             error: audio.error,
@@ -990,7 +1006,7 @@ class CallsTableManager {
             cell.appendChild(errorMsg);
           } else if (audio.readyState >= 2) {
             // Метаданные загружены, кнопка play должна быть активна
-            console.log('Метаданные загружены, кнопка play должна быть активна');
+            debugLog('Метаданные загружены, кнопка play должна быть активна');
             audio.controls = true;
           }
         }, 1000);
@@ -1064,7 +1080,7 @@ class CallsTableManager {
       const day = datePart.substring(6, 8);
 
       const url = `/recordings/${year}/${month}/${day}?file=${encodeURIComponent(recordingFile)}`;
-      console.log('Generated recording URL:', url, 'for file:', recordingFile);
+      debugLog('Generated recording URL:', url, 'for file:', recordingFile);
       return url;
     };
 
@@ -1197,11 +1213,11 @@ class CallsTableManager {
     }
 
     const totalPages = Math.ceil(this.filteredCalls.length / this.itemsPerPage);
-    console.log('renderPagination: filteredCalls.length =', this.filteredCalls.length, 'itemsPerPage =', this.itemsPerPage, 'totalPages =', totalPages);
+    debugLog('renderPagination: filteredCalls.length =', this.filteredCalls.length, 'itemsPerPage =', this.itemsPerPage, 'totalPages =', totalPages);
 
     if (totalPages <= 1) {
       this.paginationControls.innerHTML = '';
-      console.log('Пагинация скрыта: всего страниц <= 1');
+      debugLog('Пагинация скрыта: всего страниц <= 1');
       return;
     }
 
@@ -1357,7 +1373,7 @@ class UIManager {
   setupToggles() {
     const viewToggle = document.getElementById('view-toggle');
 
-    console.log('Setting up toggles:', {
+    debugLog('Setting up toggles:', {
       viewToggle: !!viewToggle
     });
 
@@ -1374,19 +1390,19 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/js/sw.js')
       .then(registration => {
-        console.log('Service Worker зарегистрирован:', registration);
+        debugLog('Service Worker зарегистрирован:', registration);
       })
       .catch(error => {
-        console.log('Ошибка регистрации Service Worker:', error);
+        debugLog('Ошибка регистрации Service Worker:', error);
       });
   });
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-  console.log('=== DOMContentLoaded fired ===');
+  debugLog('=== DOMContentLoaded fired ===');
 
   // Инициализируем менеджер интерфейса
-  console.log('Initializing UIManager...');
+  debugLog('Initializing UIManager...');
   new UIManager();
 
   // Инициализируем обработчик формы
@@ -1396,11 +1412,11 @@ document.addEventListener('DOMContentLoaded', function() {
   initializeExportButtons();
 
   // Инициализируем менеджер таблицы
-  console.log('Creating CallsTableManager...');
+  debugLog('Creating CallsTableManager...');
   // Проверяем наличие данных перед инициализацией
   const callsDataElement = document.getElementById('calls-data');
   if (callsDataElement) {
-    console.log('calls-data элемент найден, инициализируем таблицу...');
+    debugLog('calls-data элемент найден, инициализируем таблицу...');
     const tableManager = new CallsTableManager();
   } else {
     console.warn('calls-data элемент не найден - таблица не будет инициализирована');
@@ -1637,7 +1653,7 @@ function playRecording(filename) {
   const day = datePart.substring(6, 8);
   const recordingUrl = `/recordings/${year}/${month}/${day}?file=${encodeURIComponent(filename)}`;
 
-  console.log('🎵 Playing recording:', recordingUrl);
+  debugLog('🎵 Playing recording:', recordingUrl);
 
   // Создаем audio элемент и воспроизводим
   const audio = new Audio(recordingUrl);
@@ -1650,7 +1666,7 @@ function playRecording(filename) {
 
   // Добавляем обработчики событий
   audio.addEventListener('ended', () => {
-    console.log('Recording playback finished');
+    debugLog('Recording playback finished');
   });
 
   audio.addEventListener('error', (e) => {
