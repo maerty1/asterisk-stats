@@ -1,0 +1,321 @@
+---
+description: "Паттерны для API маршрутов, Swagger документации и обработки запросов"
+globs: ["app.js", "routes/*.js", "swagger*.js"]
+alwaysApply: false
+---
+
+# API маршруты и обработка запросов
+
+> **Тип правила**: Apply to Specific Files  
+> **Применяется когда**: Работа с файлами `app.js`, `routes/*.js`, `swagger*.js`  
+> **Также доступно**: Упоминание через `@api-routes` в чате
+
+## Структура маршрутов
+
+### Express маршруты
+
+```javascript
+app.get('/route', async (req, res) => {
+  try {
+    // Валидация параметров
+    const { param1, param2 } = req.query;
+    if (!param1) {
+      return res.status(400).json({ error: 'Missing parameter' });
+    }
+    
+    // Получение данных
+    const data = await getData(param1, param2);
+    
+    // Ответ
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error in route:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+```
+
+## Валидация входных данных
+
+### Параметры запроса
+
+- Всегда проверяйте наличие обязательных параметров
+- Валидируйте форматы (даты, числа, строки)
+- Санитизируйте пользовательский ввод
+
+```javascript
+const { startDate, endDate, queueName } = req.query;
+
+// Валидация дат
+if (!startDate || !endDate) {
+  return res.status(400).json({ error: 'Start and end dates are required' });
+}
+
+// Валидация формата даты
+const start = new Date(startDate);
+const end = new Date(endDate);
+if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+  return res.status(400).json({ error: 'Invalid date format' });
+}
+```
+
+## Обработка ошибок
+
+### Структура ответа об ошибке
+
+```javascript
+res.status(500).json({ 
+  error: 'Internal server error',
+  message: error.message,
+  details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+});
+```
+
+### Логирование
+
+- Используйте `logger.js` для всех ошибок
+- Логируйте контекст (параметры запроса, пользователь)
+- Не логируйте чувствительные данные (пароли, токены)
+
+## Оптимизация ответов
+
+### Сжатие
+
+- Используйте `compression()` middleware для Gzip сжатия
+- Особенно важно для больших JSON ответов
+
+### Кэширование
+
+- Кэшируйте статические данные (списки очередей, настройки)
+- Используйте заголовки Cache-Control для статики
+- Cache busting: `?v=<%= staticVersion %>` в EJS (генерируется при старте сервера)
+
+### Пагинация
+
+Для больших наборов данных используйте пагинацию:
+
+```javascript
+const page = parseInt(req.query.page) || 1;
+const limit = parseInt(req.query.limit) || 25;
+const offset = (page - 1) * limit;
+
+const [data, total] = await Promise.all([
+  getData(offset, limit),
+  getTotalCount()
+]);
+
+res.json({
+  data,
+  pagination: {
+    page,
+    limit,
+    total,
+    pages: Math.ceil(total / limit)
+  }
+});
+```
+
+## Безопасность
+
+### Rate Limiting
+
+Используйте `express-rate-limit`:
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 минут
+  max: 100 // максимум 100 запросов
+});
+
+app.use('/api/', limiter);
+```
+
+### Защита от SQL-инъекций
+
+- Всегда используйте prepared statements
+- Никогда не вставляйте пользовательский ввод напрямую в SQL
+
+### Защита от Path Traversal
+
+- Валидируйте параметры пути через regex: `/^\d{4}$/` для года, `/^\d{2}$/` для месяца/дня
+- Проверяйте имена файлов на отсутствие `..` и `/`: `/^[a-zA-Z0-9._-]+$/`
+- После `path.join()` проверяйте, что результат находится внутри базовой директории:
+
+```javascript
+const resolvedPath = path.resolve(filePath);
+if (!resolvedPath.startsWith(path.resolve(basePath))) {
+  return res.status(403).json({ error: 'Access denied' });
+}
+```
+
+### Защита от Command Injection
+
+- **Не используйте** `child_process.exec/execSync` с пользовательскими данными
+- Вместо `exec('find ...')` используйте `fs.readdirSync()` + `path.join()`
+
+### CORS
+
+Настройте CORS для API при необходимости:
+
+```javascript
+const cors = require('cors');
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
+  credentials: true
+}));
+```
+
+## Состояние на клиенте
+
+- Храните пользовательские настройки в `sessionStorage` на клиенте
+- Сохраняйте выбранные даты между страницами
+- Серверные сессии не используются (stateless)
+
+## Формат ответов
+
+### Успешный ответ
+
+```javascript
+res.json({
+  success: true,
+  data: result,
+  meta: {
+    timestamp: new Date().toISOString(),
+    duration: `${Date.now() - startTime}ms`
+  }
+});
+```
+
+### Ответ с ошибкой
+
+```javascript
+res.status(400).json({
+  success: false,
+  error: 'Error message',
+  code: 'ERROR_CODE'
+});
+```
+
+## Swagger документация
+
+### JSDoc аннотации
+
+Все API эндпоинты должны быть документированы с помощью JSDoc комментариев:
+
+```javascript
+/**
+ * @swagger
+ * /api/resource:
+ *   get:
+ *     summary: Краткое описание
+ *     description: Подробное описание
+ *     tags: [TagName]
+ *     parameters:
+ *       - in: query
+ *         name: param
+ *         schema:
+ *           type: string
+ *         description: Описание параметра
+ *     responses:
+ *       200:
+ *         description: Успешный ответ
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ResponseSchema'
+ */
+router.get('/', async (req, res) => { ... });
+```
+
+### Схемы данных
+
+Определяйте схемы в `swagger-schemas.js`:
+
+```javascript
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     MySchema:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *         name:
+ *           type: string
+ */
+```
+
+### Теги
+
+Используйте теги для группировки эндпоинтов:
+- `Health` - проверка состояния
+- `Rankings` - рейтинг очередей
+- `Settings` - настройки
+- `Reports` - отчеты
+
+## Prometheus метрики
+
+### Использование метрик
+
+```javascript
+const { recordDbQuery, recordCall, setActiveQueues } = require('./metrics');
+
+// Запись времени запроса к БД
+const start = Date.now();
+await dbExecute(query);
+recordDbQuery('select', (Date.now() - start) / 1000);
+
+// Запись обработанного звонка
+recordCall('inbound', 'answered');
+
+// Обновление количества очередей
+setActiveQueues(queues.length);
+```
+
+### Доступные функции
+
+- `recordDbQuery(type, duration, success)` - метрика запроса к БД
+- `recordCall(type, status)` - метрика обработанного звонка
+- `setActiveQueues(count)` - количество активных очередей
+- `recordEmailSent(type, success)` - отправка email
+- `recordReportGeneration(type, duration)` - генерация отчета
+
+## Модульность роутов
+
+### Создание нового роутера
+
+```javascript
+// routes/my-route.js
+const express = require('express');
+const router = express.Router();
+const logger = require('../logger');
+
+/**
+ * @swagger
+ * /api/my-route:
+ *   get:
+ *     summary: Описание
+ *     tags: [MyTag]
+ */
+router.get('/', async (req, res) => {
+  try {
+    // логика
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Ошибка:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+module.exports = router;
+```
+
+### Подключение в app.js
+
+```javascript
+const myRouter = require('./routes/my-route');
+app.use('/api/my-route', myRouter);
+```

@@ -1,0 +1,117 @@
+---
+description: "Паттерны работы с базой данных и оптимизация запросов"
+globs: ["**/db-*.js", "**/*-helper.js", "app.js", "timezone-helper.js"]
+alwaysApply: false
+---
+
+# Паттерны работы с базой данных
+
+> **Тип правила**: Apply to Specific Files  
+> **Применяется когда**: Работа с файлами БД (`db-*.js`, `*-helper.js`, `app.js`)  
+> **Также доступно**: Упоминание через `@database-patterns` в чате
+
+## Использование адаптеров
+
+Проект использует модульную систему адаптеров БД:
+
+- **Основной адаптер**: `db-optimizer.js` - кэширование prepared statements, connection pooling
+- **Ультра-быстрые запросы**: `db-optimized-queue.js` - стратегия "2 запроса + Map"
+- **Параллельные запросы**: `db-parallel.js` - для максимального использования CPU
+- **Большие данные**: `db-large-data.js` - оптимизация для MariaDB, Map lookup для callback matching
+- **Звонки из БД**: `db-calls.js` - выделенный модуль для получения звонков (getQueueCalls, getInboundCalls, getOutboundCalls, getQueueAgents, getOutboundQueueCalls). Содержит общие хелперы `timeToString()` и `mapDispositionToStatus()`
+
+## Структура запросов
+
+### Базовый паттерн
+
+```javascript
+const { execute: dbExecute } = require('./db-optimizer');
+
+async function getData(params) {
+  const [rows] = await dbExecute(`
+    SELECT * FROM table 
+    WHERE condition = ?
+  `, [value]);
+  
+  return rows;
+}
+```
+
+### Batch processing для больших запросов
+
+При работе с большими массивами ID используйте батчи:
+
+```javascript
+const BATCH_SIZE = 1000; // Определено в начале файла
+const results = [];
+
+for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+  const batch = ids.slice(i, i + BATCH_SIZE);
+  const placeholders = batch.map(() => '?').join(',');
+  
+  const [rows] = await dbExecute(`
+    SELECT * FROM table 
+    WHERE id IN (${placeholders})
+  `, batch);
+  
+  results.push(...rows);
+}
+```
+
+## Оптимизация запросов
+
+1. **Используйте индексы**: Все запросы должны использовать индексированные поля
+2. **Избегайте N+1 проблем**: Используйте JOIN или Map для объединения данных
+3. **Кэширование**: Кэшируйте часто запрашиваемые данные (очереди, настройки)
+4. **Connection pooling**: Всегда используйте пул соединений
+
+## Работа с временем
+
+- Используйте функцию `timeToString()` из `db-calls.js` или `db-optimized-queue.js` для преобразования времени
+- Парсите строки времени через regex для избежания проблем с timezone (не используйте `new Date(timeStr)`)
+- Валидируйте разумность временных интервалов (максимум 2 часа для waitTime)
+- Для таймзон используйте `timezone-helper.js` — централизованный модуль с поддержкой DST через `Intl.DateTimeFormat`
+
+## Оптимизация callback matching
+
+Для сопоставления перезвонов с пропущенными используйте Map вместо `Array.find()`:
+
+```javascript
+// ✅ Правильно — O(N) через Map с multi-key lookup
+const callbackMap = new Map();
+callbacks.forEach(cb => {
+  callbackMap.set(`${cb.src}_${cb.calldate}`, cb);
+  callbackMap.set(`${cb.dst}_${cb.calldate}`, cb);
+});
+
+// ❌ Неправильно — O(N×M) через Array.find()
+const match = callbacks.find(cb => cb.src === call.dst);
+```
+
+## Фильтрация звонков
+
+### Входящие звонки
+- `src` должен быть длинным (> OUTBOUND_MIN_LENGTH)
+- `dst` должен быть коротким (<= OUTBOUND_MIN_LENGTH)
+
+### Исходящие звонки
+- `src` должен быть коротким (<= OUTBOUND_MIN_LENGTH)
+- `dst` должен быть длинным (> OUTBOUND_MIN_LENGTH)
+
+### Рабочие часы
+- Используйте `filterByWorkingHours()` из `app.js`
+- Настройки берутся из `getWorkingHoursConfig()`
+
+## SQLite для настроек
+
+Для настроек используйте `settings-db.js`:
+
+```javascript
+const settingsDb = require('./settings-db');
+
+// Получить настройку
+const value = await settingsDb.get('SETTING_NAME');
+
+// Установить настройку
+await settingsDb.set('SETTING_NAME', 'value');
+```

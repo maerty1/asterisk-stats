@@ -1,0 +1,271 @@
+---
+description: "Паттерны интернационализации (i18n) для многоязычности"
+globs: ["i18n/*.js", "i18n/*.json"]
+alwaysApply: false
+---
+
+# i18n (Интернационализация)
+
+> **Тип правила**: Apply to Specific Files  
+> **Применяется когда**: Работа с файлами i18n (`i18n/*.js`, `i18n/*.json`)  
+> **Также доступно**: Упоминание через `@i18n-patterns` в чате
+
+## Архитектура
+
+### Структура файлов
+
+```
+i18n/
+├── index.js     # Модуль i18n (middleware, роутер, функции)
+├── ru.json      # Русские переводы
+└── en.json      # Английские переводы
+```
+
+### Поддерживаемые языки
+
+```javascript
+const SUPPORTED_LOCALES = ['ru', 'en'];
+const DEFAULT_LOCALE = 'ru';
+```
+
+## Функция перевода
+
+### Базовое использование
+
+```javascript
+const { t } = require('./i18n');
+
+// Простой перевод
+t('app.title', 'ru');  // "Аналитика звонков"
+t('app.title', 'en');  // "Call Analytics"
+
+// С параметрами
+t('stats.calls', 'ru', { count: 100 });  // "Звонков: 100"
+```
+
+### Структура ключей
+
+Используйте вложенную структуру для организации:
+
+```json
+{
+  "app": {
+    "title": "Название приложения",
+    "subtitle": "Подзаголовок"
+  },
+  "nav": {
+    "analytics": "Аналитика",
+    "rankings": "Рейтинг"
+  },
+  "filters": {
+    "queue": "Очередь",
+    "startDate": "Начало периода"
+  }
+}
+```
+
+### Параметры в переводах
+
+```json
+{
+  "stats": {
+    "totalCalls": "Всего звонков: {{count}}",
+    "period": "Период: {{start}} - {{end}}"
+  }
+}
+```
+
+## Express Middleware
+
+### i18nMiddleware
+
+```javascript
+// Определяет язык из: query > cookie > Accept-Language > default
+app.use(i18nMiddleware);
+
+// Добавляет в res.locals:
+// - t(key, params) - функция перевода
+// - locale - текущий язык
+// - locales - доступные языки
+```
+
+### Использование в EJS
+
+```ejs
+<!DOCTYPE html>
+<html lang="<%= locale %>">
+<head>
+  <title><%= t('app.title') %></title>
+</head>
+<body>
+  <h1><%= t('nav.analytics') %></h1>
+  
+  <!-- Переключатель языка -->
+  <div class="lang-switcher">
+    <% locales.forEach(lang => { %>
+      <button class="lang-btn <%= lang === locale ? 'active' : '' %>"
+              onclick="setLanguage('<%= lang %>')">
+        <%= lang.toUpperCase() %>
+      </button>
+    <% }) %>
+  </div>
+</body>
+</html>
+```
+
+## API роуты
+
+### GET /api/i18n/current
+
+Возвращает текущий язык и все переводы:
+
+```json
+{
+  "locale": "ru",
+  "supported": ["ru", "en"],
+  "translations": { ... }
+}
+```
+
+### GET /api/i18n/set/:locale
+
+Устанавливает язык (сохраняет в cookie):
+
+```javascript
+// Запрос
+GET /api/i18n/set/en
+
+// Ответ
+{ "success": true, "locale": "en" }
+
+// Cookie: lang=en; Max-Age=31536000
+```
+
+## Добавление нового языка
+
+### 1. Создать файл перевода
+
+```bash
+cp i18n/en.json i18n/de.json
+```
+
+### 2. Перевести строки
+
+```json
+{
+  "app": {
+    "title": "Anrufanalyse"
+  }
+}
+```
+
+### 3. Добавить в SUPPORTED_LOCALES
+
+```javascript
+const SUPPORTED_LOCALES = ['ru', 'en', 'de'];
+```
+
+## Добавление новых ключей
+
+### 1. Добавить в ru.json (базовый)
+
+```json
+{
+  "newSection": {
+    "newKey": "Новый текст"
+  }
+}
+```
+
+### 2. Добавить в en.json
+
+```json
+{
+  "newSection": {
+    "newKey": "New text"
+  }
+}
+```
+
+### 3. Использовать в коде
+
+```ejs
+<%= t('newSection.newKey') %>
+```
+
+## Best Practices
+
+### Именование ключей
+
+```javascript
+// ✅ Хорошо - семантические имена
+t('nav.rankings')
+t('filters.startDate')
+t('errors.notFound')
+
+// ❌ Плохо - непонятные имена
+t('btn1')
+t('text_123')
+```
+
+### Fallback
+
+```javascript
+// Если ключ не найден - возвращается сам ключ
+t('unknown.key');  // "unknown.key"
+
+// Если язык не поддерживается - используется DEFAULT_LOCALE
+t('app.title', 'unknown');  // Вернет русский перевод
+```
+
+### Pluralization (будущее)
+
+```json
+{
+  "calls": {
+    "zero": "Нет звонков",
+    "one": "{{count}} звонок",
+    "few": "{{count}} звонка",
+    "many": "{{count}} звонков"
+  }
+}
+```
+
+## Клиентский JavaScript
+
+### Получение переводов
+
+```javascript
+// Загрузить переводы
+const response = await fetch('/api/i18n/current');
+const { translations, locale } = await response.json();
+
+// Использовать
+document.title = translations.app.title;
+```
+
+### Смена языка
+
+```javascript
+async function setLanguage(lang) {
+  await fetch(`/api/i18n/set/${lang}`);
+  location.reload();  // Перезагрузить страницу
+}
+```
+
+### Динамический перевод на клиенте
+
+```javascript
+function t(key, params = {}) {
+  const keys = key.split('.');
+  let value = window.translations;
+  
+  for (const k of keys) {
+    value = value?.[k];
+  }
+  
+  if (typeof value !== 'string') return key;
+  
+  return value.replace(/\{\{(\w+)\}\}/g, (_, p) => params[p] ?? '');
+}
+```

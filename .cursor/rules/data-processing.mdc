@@ -1,0 +1,164 @@
+---
+description: "Паттерны обработки и валидации данных звонков"
+globs: ["**/helpers.js", "**/queue-rankings*.js", "**/stats-calculator.js", "**/callback-checker.js", "**/timezone-helper.js", "**/db-calls.js"]
+alwaysApply: false
+---
+# Обработка данных звонков
+
+> **Тип правила**: Apply to Specific Files  
+> **Применяется когда**: Работа с файлами обработки данных (`helpers.js`, `queue-rankings*.js`, `stats-calculator.js`, `callback-checker.js`)  
+> **Также доступно**: Упоминание через `@data-processing` в чате
+
+## Валидация времени
+
+### Парсинг времени
+
+Всегда используйте regex для парсинга строк времени:
+
+```javascript
+const parseTime = (timeStr) => {
+  if (!timeStr || typeof timeStr !== 'string') return null;
+  const match = timeStr.match(/(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2}):(\d{2})/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second] = match.map(Number);
+  return new Date(year, month - 1, day, hour, minute, second).getTime();
+};
+```
+
+**Не используйте** `new Date(timeStr)` напрямую - это может вызвать проблемы с timezone.
+
+### Валидация waitTime
+
+- Максимальное значение: 7200 секунд (2 часа)
+- Минимальное значение: 0 секунд
+- Невалидные значения возвращают `'-'`
+
+```javascript
+if (diffSeconds >= 0 && diffSeconds <= 7200) {
+  return diffSeconds;
+}
+return '-';
+```
+
+## Форматирование данных
+
+### Время
+
+- Используйте `formatDuration()` из `helpers.js` для отображения длительности
+- Формат: "X мин Y сек"
+- Для ASA используйте `formatTime()` из `queue-rankings-helper.js`
+
+### Номера телефонов
+
+- Убирайте префиксы `+7` и `7` в начале номера
+- Отображайте только 10-значный номер: `9506081613` вместо `79506081613`
+
+```javascript
+function formatPhoneNumber(number) {
+  if (!number) return '-';
+  return String(number).replace(/^\+?7/, '');
+}
+```
+
+### Статусы звонков
+
+- Используйте `translateStatus()` из `helpers.js`
+- Маппинг статусов:
+  - `completed_by_caller` → "Завершен клиентом"
+  - `completed_by_agent` → "Завершен агентом"
+  - `abandoned` → "Неотвечен"
+
+## Расчет статистики
+
+### Метрики очередей
+
+- **totalCalls**: Общее количество звонков
+- **answeredCalls**: Отвеченные звонки (status !== 'abandoned')
+- **abandonedCalls**: Неотвеченные звонки (status === 'abandoned')
+- **answerRate**: (answeredCalls / totalCalls) * 100
+- **sla**: Процент звонков, отвеченных в течение SLA времени
+- **asa**: Среднее время ответа (Average Speed of Answer)
+
+### Рейтинг очередей
+
+Формула рейтинга в `queue-rankings.js`:
+
+```javascript
+compositeScore = 
+  (answerRate * weight) +
+  (sla * weight) +
+  (noCallbacksRate * weight) + // Штраф за необработанные
+  (callbackRate * weight) +     // Бонус за перезвоны
+  (volumeBonus)                 // Бонус за объем
+```
+
+**Важно**: 
+- `noCallbacksRate` применяется как штраф (0% = 0, 100% = -20)
+- `callbackRate` применяется только если есть abandoned calls
+- `volumeBonus` ограничен максимумом (10 баллов)
+
+## Проверка перезвонов
+
+Используйте `callback-checker.js`:
+
+- `checkCallbacksBatch()` - для обычных звонков
+- `checkCallbacksBatchInbound()` - для входящих звонков
+
+Логика:
+- Ищем звонки с одинаковым `clientNumber`
+- Проверяем временной интервал между звонками
+- Определяем, кто перезвонил (клиент или агент)
+
+## Фильтрация данных
+
+### По рабочим часам
+
+```javascript
+function filterByWorkingHours(calls) {
+  const config = getWorkingHoursConfig();
+  if (!config.enabled) return calls;
+  
+  return calls.filter(call => {
+    // Проверка времени звонка
+  });
+}
+```
+
+### По типу звонка
+
+- **Входящие**: длинный src → короткий dst
+- **Исходящие**: короткий src → длинный dst
+- **Внутренние**: исключаются из статистики
+
+## Работа с таймзонами
+
+Используйте централизованный модуль `timezone-helper.js`:
+
+```javascript
+const { getTimezone, getTimezoneOffset } = require('./timezone-helper');
+
+const tz = getTimezone();        // "Europe/Moscow" (из TZ env)
+const offset = getTimezoneOffset(); // "+03:00" (с учетом DST)
+```
+
+**Важно**:
+- Не хардкодьте смещение таймзоны (`+03:00`) — оно зависит от DST
+- Не дублируйте логику таймзон — используйте `timezone-helper.js`
+- Модуль использует `Intl.DateTimeFormat` для корректного определения DST
+
+## Общие хелперы в db-calls.js
+
+Функции `timeToString()` и `mapDispositionToStatus()` вынесены в `db-calls.js`:
+
+```javascript
+const { getQueueCalls, getInboundCalls, getOutboundCalls } = require('./db-calls');
+```
+
+**Не дублируйте** эти функции — импортируйте из `db-calls.js`.
+
+## Обработка ошибок
+
+- Всегда возвращайте значения по умолчанию при ошибках
+- Логируйте ошибки через `logger.warn`/`logger.error`, но не показывайте их пользователю
+- Используйте try/catch для всех операций с данными
+- **Не оставляйте пустые catch блоки** — всегда логируйте ошибку

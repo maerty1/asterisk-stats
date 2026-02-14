@@ -1,0 +1,263 @@
+---
+description: "Паттерны для WebSocket, real-time обновлений и сравнения периодов"
+globs: ["websocket.js", "period-comparison.js", "public/js/websocket-client.js", "routes/comparison.js"]
+alwaysApply: false
+---
+
+# Real-time и WebSocket паттерны
+
+> **Тип правила**: Apply to Specific Files  
+> **Применяется когда**: Работа с файлами WebSocket и сравнения периодов (`websocket.js`, `period-comparison.js`, `public/js/websocket-client.js`, `routes/comparison.js`)  
+> **Также доступно**: Упоминание через `@realtime-websocket` в чате
+
+## Архитектура WebSocket
+
+### Серверная часть (websocket.js)
+
+```javascript
+const { Server } = require('socket.io');
+
+// Инициализация
+const io = new Server(server, {
+  cors: { origin: '*' },
+  transports: ['websocket', 'polling']
+});
+
+// Обработка подключений
+io.on('connection', (socket) => {
+  // Подписка на комнату (очередь)
+  socket.on('subscribe:queue', (queueName) => {
+    socket.join(`queue:${queueName}`);
+  });
+  
+  // Отписка
+  socket.on('unsubscribe:queue', (queueName) => {
+    socket.leave(`queue:${queueName}`);
+  });
+});
+
+// Отправка в комнату
+io.to(`queue:${queueName}`).emit('queue:stats', data);
+
+// Broadcast всем
+io.emit('system:status', status);
+```
+
+### Периодические обновления
+
+```javascript
+// Интервал обновления (30 секунд по умолчанию)
+const UPDATE_INTERVAL = process.env.WS_UPDATE_INTERVAL || 30000;
+
+setInterval(async () => {
+  // Получить все комнаты с подписками
+  const rooms = io.sockets.adapter.rooms;
+  
+  for (const [room, sockets] of rooms) {
+    if (room.startsWith('queue:')) {
+      const queueName = room.replace('queue:', '');
+      const stats = await getQueueRealTimeStats(queueName);
+      io.to(room).emit('queue:stats', { queueName, stats });
+    }
+  }
+}, UPDATE_INTERVAL);
+```
+
+## События WebSocket
+
+### Серверные события (emit)
+
+| Событие | Данные | Описание |
+|---------|--------|----------|
+| `queue:stats` | `{ queueName, stats, timestamp }` | Статистика очереди |
+| `system:status` | `{ status, database, memory }` | Статус системы |
+| `queue:newCall` | `{ queueName, call }` | Новый входящий звонок |
+| `queue:callEnded` | `{ queueName, call }` | Завершение звонка |
+
+### Клиентские события (on)
+
+| Событие | Данные | Описание |
+|---------|--------|----------|
+| `subscribe:queue` | `queueName` | Подписка на очередь |
+| `unsubscribe:queue` | `queueName` | Отписка от очереди |
+| `get:status` | - | Запрос статуса |
+
+## Real-time статистика
+
+### Структура данных очереди
+
+```javascript
+{
+  recentTotal: 15,        // Звонков за 5 минут
+  recentAnswered: 12,     // Отвечено за 5 минут
+  recentAbandoned: 3,     // Пропущено за 5 минут
+  avgWaitTime: 18,        // Среднее ожидание (сек)
+  waitingNow: 2,          // Ожидают сейчас
+  lastUpdate: '2026-01-15T12:00:00Z'
+}
+```
+
+### SQL запрос для real-time
+
+```sql
+-- Статистика за последние 5 минут
+SELECT 
+  COUNT(*) as total,
+  SUM(CASE WHEN event = 'CONNECT' THEN 1 ELSE 0 END) as answered,
+  SUM(CASE WHEN event = 'ABANDON' THEN 1 ELSE 0 END) as abandoned,
+  AVG(CASE WHEN event = 'CONNECT' THEN data1 ELSE NULL END) as avg_wait
+FROM queuelog
+WHERE queuename = ? AND time >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+```
+
+## Сравнение периодов
+
+### Типы сравнения
+
+```javascript
+const COMPARISON_TYPES = {
+  WEEK_TO_WEEK: 'week_to_week',     // Неделя к неделе
+  MONTH_TO_MONTH: 'month_to_month', // Месяц к месяцу
+  CUSTOM: 'custom'                   // Произвольные даты
+};
+```
+
+### Расчет изменений
+
+```javascript
+function calculateChange(current, previous) {
+  if (previous === 0) {
+    return { value: current, percent: current > 0 ? 100 : 0, trend: 'up' };
+  }
+  
+  const diff = current - previous;
+  const percent = ((diff / previous) * 100).toFixed(1);
+  
+  return {
+    value: diff,
+    percent: parseFloat(percent),
+    trend: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral'
+  };
+}
+```
+
+### Инверсия тренда
+
+Для метрик где меньше = лучше (ASA, abandonRate):
+
+```javascript
+// Инвертируем тренд
+if (metric.invertTrend) {
+  if (change.trend === 'up') {
+    change.trend = 'down';
+    change.isNegative = true;  // Рост ASA - плохо
+  } else if (change.trend === 'down') {
+    change.trend = 'up';
+    change.isPositive = true;  // Снижение ASA - хорошо
+  }
+}
+```
+
+### API сравнения
+
+```javascript
+// GET /api/comparison/dates?type=week_to_week
+// Ответ:
+{
+  current: { start: '2026-01-12', end: '2026-01-18', label: 'Текущая неделя' },
+  previous: { start: '2026-01-05', end: '2026-01-11', label: 'Прошлая неделя' }
+}
+
+// POST /api/comparison/stats
+// Body: { queueName, comparisonType: 'week_to_week' }
+// Ответ:
+{
+  comparison: {
+    totalCalls: { current: 100, previous: 90, change: { percent: 11.1, trend: 'up' } },
+    answerRate: { current: 95, previous: 92, change: { percent: 3.3, trend: 'up' } }
+  }
+}
+```
+
+## Клиентский код
+
+### RealTimeClient
+
+```javascript
+const client = new RealTimeClient({
+  maxReconnectAttempts: 10,
+  reconnectDelay: 3000,
+  onConnect: () => { /* ... */ },
+  onDisconnect: (reason) => { /* ... */ },
+  onQueueStats: (data) => { /* ... */ },
+  onSystemStatus: (data) => { /* ... */ }
+});
+
+client.connect();
+client.subscribeToQueue('1001');
+```
+
+### RealTimeStatsWidget
+
+```javascript
+const widget = new RealTimeStatsWidget('container-id', {
+  queueName: '1001'
+});
+
+// HTML структура виджета:
+// .realtime-widget
+//   .realtime-header
+//     .realtime-title
+//     .realtime-status
+//   .realtime-stats
+//     .realtime-stat (x4)
+//   .realtime-footer
+```
+
+## Обработка ошибок
+
+### Reconnection
+
+```javascript
+// Socket.IO автоматически переподключается
+const socket = io(url, {
+  reconnection: true,
+  reconnectionAttempts: 10,
+  reconnectionDelay: 3000
+});
+
+// При переподключении восстанавливаем подписки
+socket.on('connect', () => {
+  subscribedQueues.forEach(queue => {
+    socket.emit('subscribe:queue', queue);
+  });
+});
+```
+
+### Graceful shutdown
+
+Graceful shutdown реализован в `app.js` и закрывает все ресурсы:
+
+```javascript
+function gracefulShutdown(signal) {
+  logger.info(`Получен сигнал ${signal}, начинаем graceful shutdown...`);
+
+  server.close(async (err) => {
+    if (err) { logger.error('Ошибка при закрытии HTTP:', err); process.exit(1); }
+    
+    // Закрываем WebSocket
+    if (io) io.close(() => logger.info('WebSocket остановлен.'));
+    
+    // Закрываем пул БД
+    if (pool) await pool.end();
+    
+    process.exit(0);
+  });
+
+  // Принудительное завершение через 10 секунд
+  setTimeout(() => process.exit(1), 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+```

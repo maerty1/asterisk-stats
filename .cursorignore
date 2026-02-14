@@ -1,0 +1,44 @@
+# Cursor IDE ignore file
+# Файлы, которые не должны индексироваться Cursor для контекста
+
+# Логи
+logs/
+*.log
+app.log
+
+# База данных
+*.db
+*.db.bak
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node modules (уже большие, не нужны в контексте)
+node_modules/
+
+# Временные файлы
+*.tmp
+*.temp
+.cache/
+.temp/
+
+# Service файлы
+*.service
+
+# Backup файлы
+*.backup
+*.bak
+*.old
+
+# Coverage и тесты
+coverage/
+.nyc_output/
+
+# Build артефакты
+dist/
+build/
+out/

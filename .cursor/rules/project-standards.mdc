@@ -1,0 +1,114 @@
+---
+description: "Общие стандарты и конвенции проекта Asterisk Stats"
+alwaysApply: true
+---
+
+# Стандарты проекта Asterisk Stats
+
+> **Тип правила**: Always Apply  
+> **Применяется**: К каждой сессии чата автоматически  
+> **Назначение**: Базовые стандарты кодирования, именования и архитектуры проекта
+
+## Общая архитектура
+
+- **Backend**: Express.js с EJS шаблонами
+- **База данных**: MySQL/MariaDB (основная), SQLite (настройки)
+- **Стиль кода**: CommonJS (require/module.exports), ES6+ синтаксис
+- **Асинхронность**: Используйте async/await вместо callbacks
+
+## Соглашения по именованию
+
+- **Переменные и функции**: camelCase (`getQueueCalls`, `calculateWaitTime`)
+- **Константы**: UPPER_SNAKE_CASE (`BATCH_SIZE`, `USE_ULTRA_FAST_QUERIES`)
+- **Файлы**: kebab-case для служебных файлов (`db-optimized-queue.js`), camelCase для модулей (`helpers.js`)
+- **База данных**: snake_case для таблиц и колонок (`queuelog`, `start_time`)
+
+## Структура файлов
+
+- **Точка входа**: `app.js` - Express сервер, маршруты, middleware, graceful shutdown
+- **Роуты**: `routes/*.js` - API маршруты (Express Router)
+- **Модули БД**: `db-*.js` - работа с базой данных
+  - `db-optimizer.js` - connection pooling и кэширование prepared statements
+  - `db-optimized-queue.js` - ультра-быстрые запросы (стратегия "2 запроса + Map")
+  - `db-parallel.js` - параллельные запросы
+  - `db-large-data.js` - оптимизация для больших данных (Map lookup вместо O(N×M))
+  - `db-calls.js` - получение звонков из БД (getQueueCalls, getInboundCalls, getOutboundCalls, getQueueAgents, getOutboundQueueCalls)
+- **Хелперы**: `*-helper.js` - вспомогательные функции
+  - `timezone-helper.js` - централизованная обработка таймзон с поддержкой DST (через `Intl.DateTimeFormat`)
+  - `queue-rankings-helper.js` - форматирование для рейтингов
+- **Сервисы**: `*-service.js` - внешние сервисы (email, websocket, etc.)
+- **Типы**: `types/*.d.ts` - TypeScript определения для JSDoc
+- **i18n**: `i18n/*.json` - файлы переводов (ru.json, en.json)
+- **Вьюхи**: `views/*.ejs` - шаблоны
+- **Partials**: `views/partials/*.ejs` - компоненты шаблонов
+- **Статика**: `public/css/*.css`, `public/js/*.js`
+- **Grafana**: `grafana/*.json` - дашборды для мониторинга
+- **SQL**: `sql/*.sql` - SQL скрипты
+
+## Документация кода
+
+Все функции должны иметь JSDoc комментарии. Типы определены в `types/index.d.ts`:
+
+```javascript
+/**
+ * @typedef {import('./types').QueueCall} QueueCall
+ * @typedef {import('./types').QueueStats} QueueStats
+ */
+
+/**
+ * Получить звонки очереди за период
+ * @param {string} queueName - Название очереди
+ * @param {Date|string} startTime - Начало периода
+ * @param {Date|string} endTime - Конец периода
+ * @returns {Promise<QueueCall[]>} Массив звонков
+ */
+async function getQueueCalls(queueName, startTime, endTime) {
+  // ...
+}
+```
+
+### Доступные типы (types/index.d.ts)
+
+- `Call`, `QueueCall` - информация о звонке
+- `QueueStats`, `CallbackStats`, `HourlyStats` - статистика
+- `QueueRanking` - рейтинг очереди
+- `ComparisonPeriod`, `MetricChange`, `StatsComparison` - сравнение периодов
+- `ApiResponse`, `HealthResponse` - API ответы
+- `AppSettings`, `EmailReport` - настройки
+- `RealTimeQueueStats`, `SystemStatus` - WebSocket данные
+- `SupportedLocale`, `TranslateFunction` - i18n
+
+## Обработка ошибок
+
+- Всегда используйте try/catch для асинхронных операций
+- Валидируйте входные данные перед использованием
+- Возвращайте осмысленные значения по умолчанию (`'-'`, `0`, `[]`)
+- Логируйте ошибки через `logger.js`
+
+## Оптимизация производительности
+
+- Используйте batch processing для больших запросов (BATCH_SIZE = 1000)
+- Применяйте connection pooling через `db-optimizer.js`
+- Кэшируйте часто используемые данные (очереди, настройки)
+- Используйте ультра-оптимизированные запросы (`db-optimized-queue.js`)
+
+## Безопасность
+
+- Всегда используйте prepared statements для SQL запросов
+- Валидируйте и санитизируйте пользовательский ввод
+- Не храните пароли и секреты в коде (используйте `.env`)
+- Используйте `express-rate-limit` для защиты от злоупотреблений (уже подключен в `app.js`)
+- **Path traversal**: проверяйте пользовательский ввод (год, месяц, день, имена файлов) регулярными выражениями, используйте `path.resolve()` + проверку вхождения в базовую директорию
+- **Command injection**: не используйте `child_process.exec/execSync` с пользовательскими данными — вместо этого используйте `fs.readdirSync`/`fs.readdir` и `path.join`
+
+## Graceful Shutdown
+
+- Приложение обрабатывает `SIGTERM` и `SIGINT` для корректного завершения
+- Закрываются: HTTP сервер, WebSocket (Socket.IO), пул соединений с БД
+- Принудительное завершение через 10 секунд при зависании
+
+## Cache Busting статики
+
+- При старте генерируется `STATIC_VERSION` (через `Date.now().toString(36)`)
+- Доступен во всех EJS шаблонах через `app.locals.staticVersion`
+- Используйте `?v=<%= staticVersion %>` для CSS/JS файлов вместо `Date.now()`

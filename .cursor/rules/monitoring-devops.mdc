@@ -1,0 +1,294 @@
+---
+description: "Паттерны для мониторинга, метрик, Docker, CI/CD и Grafana"
+globs: ["metrics.js", "Dockerfile", "docker-compose.yml", ".github/workflows/*.yml", "grafana/*.json"]
+alwaysApply: false
+---
+
+# Мониторинг и DevOps
+
+> **Тип правила**: Apply to Specific Files  
+> **Применяется когда**: Работа с файлами мониторинга, Docker, CI/CD (`metrics.js`, `Dockerfile`, `docker-compose.yml`, `.github/workflows/*.yml`, `grafana/*.json`)  
+> **Также доступно**: Упоминание через `@monitoring-devops` в чате
+
+## Prometheus метрики
+
+### Типы метрик
+
+1. **Counter** - только увеличивается (запросы, ошибки)
+2. **Gauge** - может увеличиваться и уменьшаться (активные соединения)
+3. **Histogram** - распределение значений (время ответа)
+
+### Именование метрик
+
+```
+{namespace}_{subsystem}_{name}_{unit}
+```
+
+Примеры:
+- `asterisk_stats_http_requests_total`
+- `asterisk_stats_db_query_duration_seconds`
+- `asterisk_stats_active_queues`
+
+### Лейблы
+
+- Используйте лейблы для измерений (method, route, status_code)
+- Избегайте высокой кардинальности (не используйте user_id как лейбл)
+- Нормализуйте динамические пути (/users/123 → /users/:id)
+
+```javascript
+httpRequestsTotal.inc({
+  method: req.method,
+  route: normalizeRoute(req.path),
+  status_code: res.statusCode
+});
+```
+
+## Health Checks
+
+### Типы проверок
+
+1. **Liveness** (`/api/health/live`)
+   - Приложение запущено?
+   - Быстрый ответ, минимум логики
+   - Kubernetes: restartPolicy
+
+2. **Readiness** (`/api/health/ready`)
+   - Готово принимать трафик?
+   - Проверка зависимостей (БД)
+   - Kubernetes: убирает из Service
+
+3. **Full Health** (`/api/health`)
+   - Детальная информация
+   - Для мониторинга и дебага
+
+### Структура ответа
+
+```javascript
+{
+  status: 'healthy' | 'unhealthy',
+  timestamp: '2026-01-15T12:00:00.000Z',
+  uptime: { seconds: 3600, formatted: '1h 0m 0s' },
+  version: '1.1.0',
+  database: { connected: true, latency: 5 },
+  memory: { heapUsed: '35 MB', rss: '100 MB' }
+}
+```
+
+## Docker
+
+### Dockerfile best practices
+
+```dockerfile
+# Используйте multi-stage builds
+FROM node:16-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+FROM node:16-alpine
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY . .
+EXPOSE 3000
+CMD ["node", "app.js"]
+```
+
+### .dockerignore
+
+Всегда включайте:
+```
+node_modules
+npm-debug.log
+.git
+.env
+logs
+*.db
+```
+
+### Docker Compose
+
+- Используйте `depends_on` для зависимостей
+- Монтируйте volumes для персистентности
+- Используйте `.env` для конфигурации
+
+## CI/CD (GitHub Actions)
+
+### Структура workflow
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '16'
+      - run: npm ci
+      - run: npm test
+      - run: docker build .
+```
+
+### Секреты
+
+- Храните в GitHub Secrets
+- Не логируйте секреты
+- Используйте `${{ secrets.NAME }}`
+
+## Логирование (Winston)
+
+### Уровни логов
+
+- `error` - ошибки, требующие внимания
+- `warn` - предупреждения
+- `info` - важные события (запуск, остановка)
+- `debug` - детальная информация для отладки
+
+### Использование
+
+```javascript
+const logger = require('./logger');
+
+logger.info('Сервер запущен на порту 3000');
+logger.error('Ошибка подключения к БД:', error);
+logger.warn('Превышен лимит запросов');
+```
+
+### Формат логов
+
+JSON для продакшена:
+```json
+{
+  "level": "info",
+  "message": "Сервер запущен",
+  "service": "asterisk-stats",
+  "timestamp": "2026-01-15 12:00:00"
+}
+```
+
+## Grafana Dashboards
+
+### Структура файлов
+
+```
+grafana/
+└── asterisk-stats-dashboard.json  # Основной дашборд
+```
+
+### Импорт дашборда
+
+1. Grafana → Dashboards → Import
+2. Upload JSON file или вставить содержимое
+3. Выбрать Prometheus datasource
+4. Import
+
+### Структура JSON дашборда
+
+```json
+{
+  "__inputs": [
+    { "name": "DS_PROMETHEUS", "type": "datasource" }
+  ],
+  "title": "Asterisk Stats Dashboard",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Название панели",
+      "targets": [
+        { "expr": "asterisk_stats_metric_name", "refId": "A" }
+      ]
+    }
+  ],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s"
+}
+```
+
+### Типы панелей
+
+| Тип | Использование |
+|-----|--------------|
+| `stat` | Одиночное значение (uptime, статус) |
+| `gauge` | Показатель с порогами |
+| `timeseries` | График во времени |
+| `table` | Табличные данные |
+| `heatmap` | Распределение |
+
+### Prometheus запросы
+
+```promql
+# Requests per second
+rate(asterisk_stats_http_requests_total[5m])
+
+# 95th percentile latency
+histogram_quantile(0.95, rate(asterisk_stats_http_request_duration_seconds_bucket[5m]))
+
+# Memory usage
+asterisk_stats_process_resident_memory_bytes
+
+# Active queues
+asterisk_stats_active_queues
+```
+
+### Thresholds (пороговые значения)
+
+```json
+"thresholds": {
+  "mode": "absolute",
+  "steps": [
+    { "color": "green", "value": null },
+    { "color": "yellow", "value": 50 },
+    { "color": "red", "value": 100 }
+  ]
+}
+```
+
+### Alerts (опционально)
+
+```json
+"alert": {
+  "name": "High Latency",
+  "conditions": [
+    {
+      "evaluator": { "type": "gt", "params": [1] },
+      "query": { "params": ["A", "5m", "now"] }
+    }
+  ]
+}
+```
+
+## Рекомендации
+
+### Production checklist
+
+- [x] Все `console.log` заменены на `logger` (в backend файлах ✅, в public/js/ остались для клиента)
+- [x] Health check endpoints настроены (`/api/health`, `/api/health/live`, `/api/health/ready`)
+- [x] Prometheus метрики подключены (`/api/metrics`)
+- [x] Docker образ оптимизирован (`Dockerfile`, `docker-compose.yml`)
+- [x] CI/CD настроен (`.github/workflows/ci.yml`)
+- [x] Secrets не в коде (`.env` в `.gitignore`, `.env.example` для примера)
+- [x] Логи структурированы (JSON через Winston `logger.js`)
+- [x] Rate limiting включен (`express-rate-limit` в `app.js` — 100 req/15 мин на API)
+- [x] WebSocket настроен для real-time (`websocket.js`, `public/js/websocket-client.js`)
+- [x] i18n настроен (ru/en) (`i18n/ru.json`, `i18n/en.json`)
+- [x] Grafana дашборд создан (`grafana/asterisk-stats-dashboard.json`)
+- [x] Graceful shutdown (`SIGTERM`/`SIGINT` → закрытие HTTP, WebSocket, DB pool)
+- [x] Cache busting статики (версионирование через `staticVersion` при старте)
+- [x] Path traversal защита (записи, API маршруты)
+- [x] Command injection защита (`fs.readdirSync` вместо `execSync('find ...')`)
+
+### Оставшиеся задачи
+
+| Задача | Приоритет | Статус |
+|--------|-----------|--------|
+| Unit тесты (Jest) | Средний | ❌ Не реализовано |
+| Аутентификация (JWT) | Низкий | ❌ Не реализовано |
+| PDF экспорт | Низкий | ❌ Не реализовано |

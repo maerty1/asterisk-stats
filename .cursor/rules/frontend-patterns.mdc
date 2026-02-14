@@ -1,0 +1,258 @@
+---
+description: "Паттерны для фронтенда: EJS шаблоны, JavaScript и стили"
+globs: ["**/views/*.ejs", "**/public/js/*.js", "**/public/css/*.css"]
+alwaysApply: false
+---
+
+# Паттерны фронтенда
+
+> **Тип правила**: Apply to Specific Files  
+> **Применяется когда**: Работа с фронтенд файлами (`views/*.ejs`, `public/js/*.js`, `public/css/*.css`)  
+> **Также доступно**: Упоминание через `@frontend-patterns` в чате
+
+## EJS Шаблоны
+
+### Структура шаблона
+
+```ejs
+<%- include('partials/header') %>
+
+<main>
+  <!-- Контент -->
+</main>
+
+<%- include('partials/footer') %>
+```
+
+### Передача данных
+
+- Используйте `res.render('template', { data })` для передачи данных
+- Всегда проверяйте наличие данных перед рендерингом
+- Используйте условный рендеринг: `<% if (condition) { %> ... <% } %>`
+
+### Форматирование данных
+
+- Используйте хелперы из `helpers.js` для форматирования времени
+- Форматируйте номера телефонов через `formatPhoneNumber()` (убирать +7 или 7)
+- Валидируйте значения перед отображением
+
+## JavaScript (Vanilla)
+
+### Структура модулей
+
+```javascript
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => {
+  initializeComponent();
+});
+
+function initializeComponent() {
+  // Логика компонента
+}
+```
+
+### Работа с датами
+
+- Используйте `sessionStorage` для сохранения выбранных дат
+- Формат дат: `YYYY-MM-DD` для input type="date"
+- Используйте `date-fns` для форматирования (если доступно)
+
+### Обработка форм
+
+```javascript
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  // Показать индикатор загрузки
+  showLoading();
+  
+  try {
+    const response = await fetch('/api/endpoint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    
+    const result = await response.json();
+    // Обработка результата
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    hideLoading();
+  }
+});
+```
+
+### Таблицы и пагинация
+
+- Используйте существующие компоненты: `calls-table.js`, `chart-simple.js`
+- Реализуйте пагинацию на клиенте для небольших наборов данных
+- Для больших данных используйте серверную пагинацию
+
+## Cache Busting статических файлов
+
+В EJS шаблонах используйте `staticVersion` для версионирования:
+
+```ejs
+<link rel="stylesheet" href="/css/style.css?v=<%= staticVersion %>">
+<script src="/js/app.js?v=<%= staticVersion %>" defer></script>
+```
+
+**Не используйте** `Date.now()` — это создаёт уникальный URL на каждый запрос и полностью отключает кэш браузера. `staticVersion` генерируется один раз при старте сервера через `app.locals.staticVersion`.
+
+## CSS Стили
+
+### Организация
+
+- Используйте Material Design 3 принципы
+- Поддерживайте темную тему (dark mode)
+- Адаптивный дизайн для мобильных устройств
+
+### Классы
+
+- Используйте Bootstrap Icons для иконок: `<i class="bi bi-icon-name"></i>`
+- Модальные окна: `.modal`, `.modal-overlay`, `.modal-content`
+- Индикаторы загрузки: `.loading-state`, `.spinner`
+- Уведомления: `.toast-container`, `.alert`
+
+### Кастомные компоненты
+
+- Таблицы: `.table`, `.table-striped`, `.table-hover`
+- Кнопки: `.btn`, `.btn-primary`
+- Формы: `.form-control`, `.form-label`
+
+## Chart.js
+
+Для графиков используйте Chart.js:
+
+```javascript
+const ctx = document.getElementById('chart').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: labels,
+    datasets: [{
+      label: 'Dataset',
+      data: data,
+      borderColor: 'rgb(75, 192, 192)',
+      tension: 0.1
+    }]
+  }
+});
+```
+
+## Обработка ошибок
+
+- Всегда показывайте пользователю понятные сообщения об ошибках
+- Используйте toast-уведомления для временных сообщений
+- Логируйте ошибки в консоль для отладки
+
+## i18n (Многоязычность)
+
+### Использование в EJS
+
+```ejs
+<!-- Доступны через middleware -->
+<h1><%= t('app.title') %></h1>
+<button><%= t('filters.analyze') %></button>
+
+<!-- Параметры -->
+<span><%= t('stats.totalCalls', { count: 100 }) %></span>
+
+<!-- Текущий язык -->
+<span>Язык: <%= locale %></span>
+```
+
+### Структура переводов
+
+```json
+{
+  "app": { "title": "Название" },
+  "nav": { "analytics": "Аналитика" },
+  "filters": { "analyze": "Анализ" }
+}
+```
+
+### Переключатель языка
+
+```html
+<div class="lang-switcher">
+  <button class="lang-btn <%= locale === 'ru' ? 'active' : '' %>" 
+          onclick="setLanguage('ru')">RU</button>
+  <button class="lang-btn <%= locale === 'en' ? 'active' : '' %>" 
+          onclick="setLanguage('en')">EN</button>
+</div>
+
+<script>
+function setLanguage(lang) {
+  fetch(`/api/i18n/set/${lang}`)
+    .then(() => location.reload());
+}
+</script>
+```
+
+## WebSocket (Real-time)
+
+### Клиентское подключение
+
+```javascript
+// Создание клиента
+const client = new RealTimeClient({
+  onConnect: () => console.log('Подключено'),
+  onDisconnect: () => console.log('Отключено'),
+  onQueueStats: (data) => updateStats(data),
+  onSystemStatus: (data) => updateStatus(data)
+});
+
+// Подключение
+client.connect();
+
+// Подписка на очередь
+client.subscribeToQueue('1001');
+
+// Отписка
+client.unsubscribeFromQueue('1001');
+```
+
+### Виджет Real-time статистики
+
+```javascript
+// Создание виджета
+const widget = new RealTimeStatsWidget('container-id', {
+  queueName: '1001'
+});
+
+// Смена очереди
+widget.setQueue('1002');
+
+// Удаление
+widget.destroy();
+```
+
+### События WebSocket
+
+| Событие | Описание |
+|---------|----------|
+| `queue:stats` | Статистика очереди (каждые 30 сек) |
+| `system:status` | Статус системы |
+| `queue:newCall` | Новый звонок |
+| `queue:callEnded` | Завершение звонка |
+
+## Сравнение периодов
+
+### CSS классы для трендов
+
+```css
+.trend-positive { color: green; }  /* Улучшение */
+.trend-negative { color: red; }    /* Ухудшение */
+.trend-neutral { color: gray; }    /* Без изменений */
+```
+
+### Отображение изменений
+
+```html
+<div class="comparison-change <%= getTrendClass(change) %>">
+  <span class="trend-icon"><%= getTrendIcon(change) %></span>
+  <span><%= formatChange(change) %></span>
+</div>
+```

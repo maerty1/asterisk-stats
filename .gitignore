@@ -104,7 +104,10 @@ Desktop.ini
 # ==========================================
 .vscode/
 .idea/
-.cursor/
+# .cursor/rules/ - НЕ игнорируем, нужны в репозитории для Cursor AI
+.cursor/skills/
+.cursor/cache/
+.cursor/tmp/
 *.swp
 *.swo
 *~
@@ -142,6 +145,9 @@ coverage/
 *.test.js
 *.spec.js
 test.html
+# Jest
+.jest/
+jest-cache/
 
 # ==========================================
 # Database
@@ -192,3 +198,15 @@ update_screenshots.sh
 # Файлы создаваемые при работе приложения
 *.sock
 *.socket
+.pm2/
+.pid
+
+# ==========================================
+# Cursor IDE (исключения)
+# ==========================================
+# .cursor/rules/ - НЕ игнорируем (нужны в репо)
+# .cursor/skills/ - игнорируем (персональные навыки)
+# .cursor/cache/ - игнорируем (кэш)
+.cursor/skills/
+.cursor/cache/
+.cursor/tmp/
