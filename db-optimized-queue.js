@@ -323,83 +323,6 @@ async function getQueueCallsUltraFast(queueName, startTime, endTime) {
   return result;
 }
 
-/**
- * Subquery: Получение звонков очереди через подзапрос
- */
-async function getQueueCallsSubquery(queueName, startTime, endTime) {
-  const [rows] = await dbExecute(`
-    SELECT 
-      q.time, q.event, q.callid, q.queuename, q.agent, 
-      q.data1, q.data2, q.data3, q.data4, q.data5,
-      (SELECT c.recordingfile 
-       FROM asteriskcdrdb.cdr c 
-       WHERE c.linkedid = q.callid 
-         AND c.disposition = 'ANSWERED' 
-       LIMIT 1) as recordingfile,
-      q.callid as linkedid
-    FROM asteriskcdrdb.queuelog q
-    WHERE q.queuename = ? 
-      AND q.time BETWEEN ? AND ?
-    ORDER BY q.time
-  `, [queueName, startTime, endTime]);
-
-  const calls = {};
-  rows.forEach(row => {
-    if (!calls[row.callid]) {
-      calls[row.callid] = {
-        callId: row.callid,
-        events: [],
-        status: 'abandoned',
-        startTime: null,
-        connectTime: null,
-        endTime: null,
-        clientNumber: null,
-        queuePosition: null,
-        agent: null,
-        duration: null,
-        waitTime: null,
-        recordingFile: row.recordingfile,
-        linkedid: row.linkedid,
-        queuename: row.queuename
-      };
-    }
-    
-    calls[row.callid].events.push(row);
-    
-    if (row.recordingfile) {
-      calls[row.callid].recordingFile = row.recordingfile;
-    }
-    
-    switch (row.event) {
-      case 'ENTERQUEUE':
-        calls[row.callid].clientNumber = row.data2;
-        calls[row.callid].queuePosition = row.data3;
-        calls[row.callid].startTime = timeToString(row.time);
-        break;
-      case 'CONNECT':
-        calls[row.callid].connectTime = timeToString(row.time);
-        calls[row.callid].agent = row.data1;
-        break;
-      case 'COMPLETECALLER':
-      case 'COMPLETEAGENT':
-        calls[row.callid].endTime = timeToString(row.time);
-        calls[row.callid].status = row.event === 'COMPLETECALLER' 
-          ? 'completed_by_caller' 
-          : 'completed_by_agent';
-        calls[row.callid].duration = row.data2;
-        break;
-      case 'ABANDON':
-      case 'EXITWITHTIMEOUT':
-        calls[row.callid].endTime = timeToString(row.time);
-        calls[row.callid].waitTime = row.data3;
-        calls[row.callid].status = 'abandoned';
-        break;
-    }
-  });
-
-  return Object.values(calls);
-}
-
 // =============================================================================
 // ВХОДЯЩИЕ ЗВОНКИ (INBOUND) - БЕЗ ФИЛЬТРАЦИИ ПО ОЧЕРЕДИ
 // =============================================================================
@@ -930,7 +853,6 @@ async function getOutboundQueueCallsUltraFast(queueName, startTime, endTime) {
 module.exports = {
   // Очереди
   getQueueCallsUltraFast,
-  getQueueCallsSubquery,
   
   // Входящие
   getInboundCallsUltraFast,           // Все входящие (без фильтра по очереди)

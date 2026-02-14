@@ -27,6 +27,10 @@ lerna-debug.log*
 # ==========================================
 logs/
 *.log
+*.log.*
+*.log.gz
+*.log.tar.gz
+*.log.zip
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -35,6 +39,53 @@ pids
 *.pid
 *.seed
 *.pid.lock
+
+# Winston logs
+winston-*.log
+combined.log
+error.log
+debug.log
+warn.log
+info.log
+
+# Ротация логов
+*.log.1
+*.log.2
+*.log.3
+*.log.4
+*.log.5
+*.log.6
+*.log.7
+*.log.8
+*.log.9
+*.log.10
+
+# Архивные логи
+*.log-*.gz
+*.log-*.tar
+*.log-*.tar.gz
+*.log-*.zip
+
+# Системные логи
+/var/log/asterisk-stats/
+journalctl-*.log
+systemd-*.log
+
+# Логи приложения Asterisk Stats
+app.log
+app-*.log
+asterisk-stats.log
+asterisk-stats-*.log
+server.log
+server-*.log
+
+# Логи ошибок
+errors.log
+errors-*.log
+exception.log
+exception-*.log
+crash.log
+crash-*.log
 
 # ==========================================
 # OS files
@@ -115,10 +166,6 @@ settings.db.bak
 # screen/ - скриншоты для README (оставляем в репозитории)
 # update_screenshots.sh - временный скрипт
 update_screenshots.sh
-
-# Приложение лог файлы
-app.log
-*.log
 
 # Service файлы (системные, не должны быть в репо)
 *.service

@@ -10,6 +10,7 @@ const os = require('os');
 // Используем settings-db.js вместо sqlite-email-db.js, так как он уже инициализирован
 const settingsDb = require('./settings-db');
 const logger = require('./logger');
+const { getTimezone, getTimezoneOffset, formatNowLocal } = require('./timezone-helper');
 
 // Конфигурация SMTP
 const createTransporter = () => {
@@ -25,7 +26,7 @@ const createTransporter = () => {
 
   // Если не указаны учетные данные, возвращаем null (отправка отключена)
   if (!smtpConfig.auth.user || !smtpConfig.auth.pass) {
-    console.warn('⚠️ SMTP credentials not configured. Email sending disabled.');
+    logger.warn('[Email Service] SMTP credentials not configured. Email sending disabled.');
     return null;
   }
 
@@ -39,36 +40,7 @@ function generateEmailTemplate(reportData) {
   // Если generationDate не передан, вычисляем его с учетом часового пояса
   let currentGenerationDate = generationDate;
   if (!currentGenerationDate) {
-    const settingsDb = require('./settings-db');
-    function getTimezoneLocal() {
-      try {
-        const settings = settingsDb.getAllSettings();
-        return settings.TZ || 'Europe/Moscow';
-      } catch (err) {
-        return process.env.TZ || 'Europe/Moscow';
-      }
-    }
-    function getTimezoneOffsetLocal(timezone) {
-      const timezoneOffsets = {
-        'Europe/Moscow': 3, 'Europe/Kiev': 2, 'Europe/Kyiv': 2, 'Europe/Minsk': 3,
-        'Asia/Yekaterinburg': 5, 'Asia/Krasnoyarsk': 7, 'Asia/Irkutsk': 8,
-        'Asia/Yakutsk': 9, 'Asia/Vladivostok': 10, 'Europe/London': 0,
-        'Europe/Paris': 1, 'Europe/Berlin': 1, 'America/New_York': -5,
-        'America/Los_Angeles': -8, 'Asia/Tashkent': 5, 'Asia/Almaty': 6
-      };
-      if (timezoneOffsets.hasOwnProperty(timezone)) {
-        return timezoneOffsets[timezone];
-      }
-      if (timezone.includes('Moscow') || timezone.includes('Minsk')) return 3;
-      if (timezone.includes('Kiev') || timezone.includes('Kyiv') || timezone.includes('EET')) return 2;
-      if (timezone.includes('London') || timezone.includes('UTC')) return 0;
-      return 0;
-    }
-    const timezone = getTimezoneLocal();
-    const offsetHours = getTimezoneOffsetLocal(timezone);
-    const now = new Date();
-    const nowInLocalTZ = new Date(now.getTime() + (offsetHours * 60 * 60 * 1000));
-    currentGenerationDate = format(nowInLocalTZ, 'dd.MM.yyyy HH:mm:ss', { locale: ru });
+    currentGenerationDate = formatNowLocal();
   }
   
   const formatTime = (seconds) => {
@@ -313,38 +285,7 @@ function generateEmailTemplate(reportData) {
     
     <div class="footer">
       <p>Это автоматически сгенерированный отчет системы Asterisk Queue Analytics</p>
-      <p>Сгенерировано: ${(() => {
-        if (generationDate) return generationDate;
-        // Fallback: вычисляем текущую дату с учетом часового пояса из настроек
-        const settingsDb = require('./settings-db');
-        function getTZ() {
-          try {
-            const settings = settingsDb.getAllSettings();
-            return settings.TZ || 'Europe/Moscow';
-          } catch (err) {
-            return process.env.TZ || 'Europe/Moscow';
-          }
-        }
-        function getOffset(tz) {
-          const offsets = {
-            'Europe/Moscow': 3, 'Europe/Kiev': 2, 'Europe/Kyiv': 2, 'Europe/Minsk': 3,
-            'Asia/Yekaterinburg': 5, 'Asia/Krasnoyarsk': 7, 'Asia/Irkutsk': 8,
-            'Asia/Yakutsk': 9, 'Asia/Vladivostok': 10, 'Europe/London': 0,
-            'Europe/Paris': 1, 'Europe/Berlin': 1, 'America/New_York': -5,
-            'America/Los_Angeles': -8, 'Asia/Tashkent': 5, 'Asia/Almaty': 6
-          };
-          if (offsets[tz]) return offsets[tz];
-          if (tz.includes('Moscow') || tz.includes('Minsk')) return 3;
-          if (tz.includes('Kiev') || tz.includes('Kyiv') || tz.includes('EET')) return 2;
-          if (tz.includes('London') || tz.includes('UTC')) return 0;
-          return 0;
-        }
-        const tz = getTZ();
-        const offset = getOffset(tz);
-        const now = new Date();
-        const localNow = new Date(now.getTime() + (offset * 60 * 60 * 1000));
-        return format(localNow, 'dd.MM.yyyy HH:mm:ss', { locale: ru });
-      })()}</p>
+      <p>Сгенерировано: ${generationDate || formatNowLocal()}</p>
     </div>
   </div>
 </body>
@@ -365,7 +306,7 @@ async function sendDailyReport(reportData) {
 
   const recipients = process.env.EMAIL_RECIPIENTS;
   if (!recipients) {
-    console.warn('⚠️ EMAIL_RECIPIENTS not configured. No recipients specified.');
+    logger.warn('[Email Service] EMAIL_RECIPIENTS not configured. No recipients specified.');
     return { success: false, error: 'No recipients specified' };
   }
 
@@ -410,36 +351,7 @@ async function generateDailyReport(pool, date, callFunctions) {
   const endTime = `${date} 23:59:59`;
   
   // Получаем текущую дату и время с учетом часового пояса из настроек
-  const settingsDb = require('./settings-db');
-  function getTimezoneLocal() {
-    try {
-      const settings = settingsDb.getAllSettings();
-      return settings.TZ || 'Europe/Moscow';
-    } catch (err) {
-      return process.env.TZ || 'Europe/Moscow';
-    }
-  }
-  function getTimezoneOffsetLocal(timezone) {
-    const timezoneOffsets = {
-      'Europe/Moscow': 3, 'Europe/Kiev': 2, 'Europe/Kyiv': 2, 'Europe/Minsk': 3,
-      'Asia/Yekaterinburg': 5, 'Asia/Krasnoyarsk': 7, 'Asia/Irkutsk': 8,
-      'Asia/Yakutsk': 9, 'Asia/Vladivostok': 10, 'Europe/London': 0,
-      'Europe/Paris': 1, 'Europe/Berlin': 1, 'America/New_York': -5,
-      'America/Los_Angeles': -8, 'Asia/Tashkent': 5, 'Asia/Almaty': 6
-    };
-    if (timezoneOffsets.hasOwnProperty(timezone)) {
-      return timezoneOffsets[timezone];
-    }
-    if (timezone.includes('Moscow') || timezone.includes('Minsk')) return 3;
-    if (timezone.includes('Kiev') || timezone.includes('Kyiv') || timezone.includes('EET')) return 2;
-    if (timezone.includes('London') || timezone.includes('UTC')) return 0;
-    return 0;
-  }
-  const timezone = getTimezoneLocal();
-  const offsetHours = getTimezoneOffsetLocal(timezone);
-  const now = new Date();
-  const nowInLocalTZ = new Date(now.getTime() + (offsetHours * 60 * 60 * 1000));
-  const generationDate = format(nowInLocalTZ, 'dd.MM.yyyy HH:mm:ss', { locale: ru });
+  const generationDate = formatNowLocal();
   
   const reportData = {
     date: format(new Date(date), 'dd.MM.yyyy', { locale: ru }),
@@ -723,29 +635,6 @@ function generateQueueEmailTemplate(reportData) {
       </div>
     </div>
     
-    <!-- Сводная информация -->
-    <div class="summary-box">
-      <h3>📅 Сводка за ${date}</h3>
-      <div class="summary-stats">
-        <div class="summary-stat">
-          <div class="summary-stat-value">${formatNumber(stats.totalCalls)}</div>
-          <div class="summary-stat-label">Всего звонков</div>
-        </div>
-        <div class="summary-stat">
-          <div class="summary-stat-value">${stats.answerRate}%</div>
-          <div class="summary-stat-label">Процент ответа</div>
-        </div>
-        <div class="summary-stat">
-          <div class="summary-stat-value">${stats.abandonRate !== undefined ? stats.abandonRate : 0}%</div>
-          <div class="summary-stat-label">Abandon Rate</div>
-        </div>
-        <div class="summary-stat">
-          <div class="summary-stat-value">${stats.slaRate}%</div>
-          <div class="summary-stat-label">SLA (20 сек)</div>
-        </div>
-      </div>
-    </div>
-    
     <!-- Ключевые метрики -->
     <h2>📊 Ключевые показатели</h2>
     <div class="stats-grid">
@@ -898,38 +787,7 @@ function generateQueueEmailTemplate(reportData) {
     
     <div class="footer">
       <p>Это автоматически сгенерированный отчет системы Asterisk Queue Analytics</p>
-      <p>Сгенерировано: ${(() => {
-        if (generationDate) return generationDate;
-        // Fallback: вычисляем текущую дату с учетом часового пояса из настроек
-        const settingsDb = require('./settings-db');
-        function getTZ() {
-          try {
-            const settings = settingsDb.getAllSettings();
-            return settings.TZ || 'Europe/Moscow';
-          } catch (err) {
-            return process.env.TZ || 'Europe/Moscow';
-          }
-        }
-        function getOffset(tz) {
-          const offsets = {
-            'Europe/Moscow': 3, 'Europe/Kiev': 2, 'Europe/Kyiv': 2, 'Europe/Minsk': 3,
-            'Asia/Yekaterinburg': 5, 'Asia/Krasnoyarsk': 7, 'Asia/Irkutsk': 8,
-            'Asia/Yakutsk': 9, 'Asia/Vladivostok': 10, 'Europe/London': 0,
-            'Europe/Paris': 1, 'Europe/Berlin': 1, 'America/New_York': -5,
-            'America/Los_Angeles': -8, 'Asia/Tashkent': 5, 'Asia/Almaty': 6
-          };
-          if (offsets[tz]) return offsets[tz];
-          if (tz.includes('Moscow') || tz.includes('Minsk')) return 3;
-          if (tz.includes('Kiev') || tz.includes('Kyiv') || tz.includes('EET')) return 2;
-          if (tz.includes('London') || tz.includes('UTC')) return 0;
-          return 0;
-        }
-        const tz = getTZ();
-        const offset = getOffset(tz);
-        const now = new Date();
-        const localNow = new Date(now.getTime() + (offset * 60 * 60 * 1000));
-        return format(localNow, 'dd.MM.yyyy HH:mm:ss', { locale: ru });
-      })()}</p>
+      <p>Сгенерировано: ${generationDate || formatNowLocal()}</p>
     </div>
   </div>
 </body>
@@ -1144,45 +1002,15 @@ async function generateQueueReport(pool, queueName, date, startTimeUTC, endTimeU
     const stats = calculateStats(calls, 'queue');
     
     // Форматируем дату для отображения (date уже в UTC, но для отображения используем локальное время)
-    // Используем функции из app.js для получения часового пояса
-    // ВАЖНО: Это создает циклическую зависимость, поэтому определяем функции локально
-    const settingsDb = require('./settings-db');
-    function getTimezoneLocal() {
-      try {
-        const settings = settingsDb.getAllSettings();
-        return settings.TZ || 'Europe/Moscow';
-      } catch (err) {
-        return process.env.TZ || 'Europe/Moscow';
-      }
-    }
-    function getTimezoneOffsetLocal(timezone) {
-      const timezoneOffsets = {
-        'Europe/Moscow': 3, 'Europe/Kiev': 2, 'Europe/Kyiv': 2, 'Europe/Minsk': 3,
-        'Asia/Yekaterinburg': 5, 'Asia/Krasnoyarsk': 7, 'Asia/Irkutsk': 8,
-        'Asia/Yakutsk': 9, 'Asia/Vladivostok': 10, 'Europe/London': 0,
-        'Europe/Paris': 1, 'Europe/Berlin': 1, 'America/New_York': -5,
-        'America/Los_Angeles': -8, 'Asia/Tashkent': 5, 'Asia/Almaty': 6
-      };
-      if (timezoneOffsets.hasOwnProperty(timezone)) {
-        return timezoneOffsets[timezone];
-      }
-      if (timezone.includes('Moscow') || timezone.includes('Minsk')) return 3;
-      if (timezone.includes('Kiev') || timezone.includes('Kyiv') || timezone.includes('EET')) return 2;
-      if (timezone.includes('London') || timezone.includes('UTC')) return 0;
-      return 0;
-    }
-    
-    const timezone = getTimezoneLocal();
-    const offsetHours = getTimezoneOffsetLocal(timezone);
+    const timezone = getTimezone();
+    const offsetHours = getTimezoneOffset(timezone);
     
     const dateObj = new Date(date + ' 12:00:00');
     const localDateObj = new Date(dateObj.getTime() + (offsetHours * 60 * 60 * 1000));
     const displayDate = format(localDateObj, 'dd.MM.yyyy', { locale: ru });
     
     // Текущая дата и время с учетом часового пояса для даты генерации
-    const now = new Date();
-    const nowInLocalTZ = new Date(now.getTime() + (offsetHours * 60 * 60 * 1000));
-    const generationDate = format(nowInLocalTZ, 'dd.MM.yyyy HH:mm:ss', { locale: ru });
+    const generationDate = formatNowLocal(timezone);
     
     // Формируем диапазон дат для Excel заголовка
     // startTime и endTime в формате 'yyyy-MM-dd HH:mm:ss' (UTC)
@@ -1235,34 +1063,8 @@ async function sendQueueReport(reportData, queueName, pool) {
     const subject = `📞 Ежедневный отчет по очереди ${queueName} - ${reportData.date}`;
 
     // Получаем настройки часового пояса для генерации Excel
-    const settingsDbLocal = require('./settings-db');
-    function getTimezoneLocal() {
-      try {
-        const settings = settingsDbLocal.getAllSettings();
-        return settings.TZ || 'Europe/Moscow';
-      } catch (err) {
-        return process.env.TZ || 'Europe/Moscow';
-      }
-    }
-    function getTimezoneOffsetLocal(timezone) {
-      const timezoneOffsets = {
-        'Europe/Moscow': 3, 'Europe/Kiev': 2, 'Europe/Kyiv': 2, 'Europe/Minsk': 3,
-        'Asia/Yekaterinburg': 5, 'Asia/Krasnoyarsk': 7, 'Asia/Irkutsk': 8,
-        'Asia/Yakutsk': 9, 'Asia/Vladivostok': 10, 'Europe/London': 0,
-        'Europe/Paris': 1, 'Europe/Berlin': 1, 'America/New_York': -5,
-        'America/Los_Angeles': -8, 'Asia/Tashkent': 5, 'Asia/Almaty': 6
-      };
-      if (timezoneOffsets.hasOwnProperty(timezone)) {
-        return timezoneOffsets[timezone];
-      }
-      if (timezone.includes('Moscow') || timezone.includes('Minsk')) return 3;
-      if (timezone.includes('Kiev') || timezone.includes('Kyiv') || timezone.includes('EET')) return 2;
-      if (timezone.includes('London') || timezone.includes('UTC')) return 0;
-      return 0;
-    }
-    
-    const timezone = getTimezoneLocal();
-    const offsetHours = getTimezoneOffsetLocal(timezone);
+    const timezone = getTimezone();
+    const offsetHours = getTimezoneOffset(timezone);
     
     // Формируем диапазон дат для заголовка Excel (используем из reportData, если есть, иначе только дату)
     const dateRange = reportData.dateRange || reportData.date;

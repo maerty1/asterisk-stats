@@ -268,27 +268,46 @@ async function checkCallbacksOptimized(conn, calls, queueName) {
         ])
       ]);
 
-      // Обрабатываем результаты
+      // Обрабатываем результаты с помощью Map для O(1) lookup по номеру
+      // Строим индекс: номер телефона → массив кандидатов из chunk
+      const phoneIndex = new Map(); // exact number → [vc, ...]
+      const last10Index = new Map(); // last 10 digits → [vc, ...]
+      const last9Index = new Map();  // last 9 digits → [vc, ...]
+      
+      for (const vc of chunk) {
+        // Exact number
+        if (!phoneIndex.has(vc.clientNumber)) phoneIndex.set(vc.clientNumber, []);
+        phoneIndex.get(vc.clientNumber).push(vc);
+        // Last 10 digits
+        if (!last10Index.has(vc.clientNumberLast10)) last10Index.set(vc.clientNumberLast10, []);
+        last10Index.get(vc.clientNumberLast10).push(vc);
+        // Last 9 digits
+        if (!last9Index.has(vc.clientNumberLast9)) last9Index.set(vc.clientNumberLast9, []);
+        last9Index.get(vc.clientNumberLast9).push(vc);
+      }
+      
       queueCallbacks.forEach(cb => {
-        const matchedCall = chunk.find(vc => {
-          if (cb.time < vc.callbackStart || cb.time > vc.callbackEnd) return false;
-          if (cb.callid === vc.callId) return false;
-          
-          const cbNumber = String(cb.clientNumber || '').trim();
-          if (!cbNumber) return false;
-          
-          return cbNumber === vc.clientNumber ||
-                 cbNumber.slice(-10) === vc.clientNumberLast10 ||
-                 cbNumber.slice(-9) === vc.clientNumberLast9;
-        });
+        const cbNumber = String(cb.clientNumber || '').trim();
+        if (!cbNumber) return;
         
-        if (matchedCall) {
-          results[matchedCall.originalIndex] = {
+        // Собираем уникальных кандидатов из всех индексов (O(1) lookup)
+        const candidateSet = new Set();
+        const addCandidates = (arr) => { if (arr) arr.forEach(vc => candidateSet.add(vc)); };
+        addCandidates(phoneIndex.get(cbNumber));
+        addCandidates(last10Index.get(cbNumber.slice(-10)));
+        addCandidates(last9Index.get(cbNumber.slice(-9)));
+        
+        for (const vc of candidateSet) {
+          if (cb.time < vc.callbackStart || cb.time > vc.callbackEnd) continue;
+          if (cb.callid === vc.callId) continue;
+          
+          results[vc.originalIndex] = {
             type: 'client_callback',
             status: 'Перезвонил сам',
             callbackTime: cb.calldate || cb.time,
-            recordingFile: cb.recordingfile || matchedCall.call.recordingFile
+            recordingFile: cb.recordingfile || vc.call.recordingFile
           };
+          break; // первое совпадение, как и в оригинале
         }
       });
     }

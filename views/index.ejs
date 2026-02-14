@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Аналитика звонков - Панель мониторинга Asterisk PBX">
   <title>Аналитика звонков</title>
-  <link rel="stylesheet" href="/css/style.css?v=<%= Date.now() %>">
-  <script src="/js/status-monitor.js?v=<%= Date.now() %>" defer></script>
-  <script src="/js/call-center-stats.js?v=<%= Date.now() %>" defer></script>
+  <link rel="stylesheet" href="/css/style.css?v=<%= staticVersion %>">
+  <script src="/js/status-monitor.js?v=<%= staticVersion %>" defer></script>
+  <script src="/js/call-center-stats.js?v=<%= staticVersion %>" defer></script>
 </head>
 <body>
   <div class="app-container">
@@ -344,16 +344,16 @@
 
   <!-- Scripts -->
   <!-- Status Monitor - Independent module -->
-  <script src="/js/status-monitor.js?v=<%= Date.now() %>"></script>
+  <script src="/js/status-monitor.js?v=<%= staticVersion %>"></script>
   
   <!-- Modules (Notification, Animation, Export) -->
-  <script src="/js/modules/notification-manager.js?v=<%= Date.now() %>"></script>
-  <script src="/js/modules/animation-manager.js?v=<%= Date.now() %>"></script>
-  <script src="/js/modules/export-utils.js?v=<%= Date.now() %>"></script>
+  <script src="/js/modules/notification-manager.js?v=<%= staticVersion %>"></script>
+  <script src="/js/modules/animation-manager.js?v=<%= staticVersion %>"></script>
+  <script src="/js/modules/export-utils.js?v=<%= staticVersion %>"></script>
   
   <!-- Chart.js Library -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="/js/chart.js?v=<%= Date.now() %>"></script>
+  <script src="/js/chart.js?v=<%= staticVersion %>"></script>
   
   <!-- Email Management Modal Script -->
   <script>

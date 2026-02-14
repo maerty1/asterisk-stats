@@ -176,13 +176,32 @@ router.get('/api/recording/:uniqueid', async (req, res) => {
     
     if (!results || results.length === 0) {
       // Пробуем найти файл напрямую по uniqueid в имени
-      const recordingsPath = process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor';
+      const recordingsPath = path.resolve(process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor');
       
-      // Ищем файл рекурсивно по uniqueid
-      const findResult = require('child_process').execSync(
-        `find ${recordingsPath} -name "*${uniqueid}*" -type f 2>/dev/null | head -1`,
-        { encoding: 'utf8' }
-      ).trim();
+      // Безопасный рекурсивный поиск файла через fs (без child_process)
+      const findFileRecursive = (dir, pattern, maxDepth = 5) => {
+        if (maxDepth <= 0) return null;
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            // Защита от path traversal: убеждаемся что путь внутри базовой директории
+            if (!fullPath.startsWith(recordingsPath)) continue;
+            if (entry.isFile() && entry.name.includes(pattern)) {
+              return fullPath;
+            }
+            if (entry.isDirectory()) {
+              const found = findFileRecursive(fullPath, pattern, maxDepth - 1);
+              if (found) return found;
+            }
+          }
+        } catch (e) {
+          // Пропускаем директории без доступа
+        }
+        return null;
+      };
+      
+      const findResult = findFileRecursive(recordingsPath, uniqueid);
       
       if (findResult) {
         logger.info(`[Recording API] Найден файл по uniqueid: ${findResult}`);
@@ -208,8 +227,14 @@ router.get('/api/recording/:uniqueid', async (req, res) => {
     const month = String(callDate.getMonth() + 1).padStart(2, '0');
     const day = String(callDate.getDate()).padStart(2, '0');
     
-    const recordingsPath = process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor';
+    const recordingsPath = path.resolve(process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor');
     const filePath = path.join(recordingsPath, String(year), month, day, recordingfile);
+    
+    // Защита от path traversal
+    if (!filePath.startsWith(recordingsPath)) {
+      logger.warn(`[Recording API] Path traversal попытка: ${filePath}`);
+      return res.status(400).json({ success: false, error: 'Неверный путь к файлу' });
+    }
     
     // Проверяем существование файла
     if (!fs.existsSync(filePath)) {
@@ -301,10 +326,13 @@ router.get('/api/recording/:uniqueid/info', async (req, res) => {
       const month = String(callDate.getMonth() + 1).padStart(2, '0');
       const day = String(callDate.getDate()).padStart(2, '0');
       
-      const recordingsPath = process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor';
+      const recordingsPath = path.resolve(process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor');
       const filePath = path.join(recordingsPath, String(year), month, day, call.recordingfile);
       
-      if (fs.existsSync(filePath)) {
+      // Защита от path traversal
+      if (!filePath.startsWith(recordingsPath)) {
+        recordingInfo = { filename: call.recordingfile, exists: false, error: 'Неверный путь к файлу' };
+      } else if (fs.existsSync(filePath)) {
         const stats = fs.statSync(filePath);
         recordingInfo = {
           filename: call.recordingfile,

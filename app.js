@@ -7,7 +7,6 @@ const fs = require('fs');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
-const { exec } = require('child_process');
 const logger = require('./logger');
 
 // WebSocket для real-time обновлений
@@ -26,15 +25,13 @@ const {
   getQueueCallsParallel, 
   getInboundCallsParallel, 
   getOutboundCallsParallel,
-  checkCallbacksParallel,
   PARALLEL_CONFIG 
 } = require('./db-parallel');
 
 // Модуль оптимизированных запросов для больших данных в MariaDB
 const {
   getQueueCallsOptimized,
-  getInboundCallsOptimized,
-  checkCallbacksOptimized
+  getInboundCallsOptimized
 } = require('./db-large-data');
 
 // Ультра-оптимизированные запросы (самые быстрые) - все используют стратегию 2 запроса + Map
@@ -45,6 +42,14 @@ const {
   getOutboundCallsUltraFast,
   getOutboundQueueCallsUltraFast
 } = require('./db-optimized-queue');
+
+// Базовые функции получения звонков (fallback, когда USE_ULTRA_FAST_QUERIES = false)
+const {
+  getQueueCalls,
+  getInboundCalls,
+  getOutboundCalls,
+  getOutboundQueueCalls
+} = require('./db-calls');
 
 // Модуль рейтингов очередей
 const {
@@ -66,6 +71,9 @@ const { metricsMiddleware, metricsRouter, setActiveQueues } = require('./metrics
 
 // i18n (многоязычность)
 const { i18nMiddleware, i18nRouter } = require('./i18n');
+
+// Общий модуль часовых поясов (DST-safe)
+const { getTimezone, getTimezoneOffset, formatNowLocal, dayBoundsToUTC } = require('./timezone-helper');
 
 // Флаги использования оптимизаций
 const USE_ULTRA_FAST_QUERIES = process.env.USE_ULTRA_FAST_QUERIES !== 'false'; // По умолчанию включено (самый быстрый)
@@ -201,6 +209,9 @@ const CALL_FILTER_CONFIG = {
   outboundMinLength: parseInt(process.env.OUTBOUND_MIN_LENGTH) || 4
 };
 
+// Версия для cache busting статики (генерируется при старте сервера)
+const STATIC_VERSION = Date.now().toString(36);
+
 let availableQueues = [];
 let queuesCacheTime = 0;
 const QUEUES_CACHE_TTL = parseInt(process.env.QUEUES_CACHE_TTL) || 3600000; // 1 час по умолчанию
@@ -224,6 +235,7 @@ app.use(i18nMiddleware); // i18n многоязычность
 app.use('/api/', apiLimiter); // Rate limiting для API
 app.set('view engine', 'ejs');
 app.set('view cache', false); // Отключаем кэширование шаблонов
+app.locals.staticVersion = STATIC_VERSION; // Доступен во всех EJS шаблонах
 app.use(express.json()); // Для JSON запросов
 app.use(express.urlencoded({ extended: true })); // Для form-data
 
@@ -286,9 +298,32 @@ const helpers = {
     if (!call.startTime) return '-';
     const endTime = call.connectTime || call.endTime;
     if (!endTime) return '-';
-    const start = new Date(call.startTime);
-    const end = new Date(endTime);
-    return Math.round((end - start) / 1000);
+    
+    try {
+      // Парсим строки времени напрямую (формат: "YYYY-MM-DD HH:MM:SS")
+      const parseTime = (timeStr) => {
+        if (!timeStr || typeof timeStr !== 'string') return null;
+        const match = timeStr.match(/(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2}):(\d{2})/);
+        if (!match) return null;
+        const [, yr, mo, dy, hr, mi, sc] = match.map(Number);
+        return new Date(yr, mo - 1, dy, hr, mi, sc).getTime();
+      };
+      
+      const startMs = parseTime(call.startTime);
+      const endMs = parseTime(endTime);
+      
+      if (startMs && endMs && endMs > startMs) {
+        const diffSeconds = Math.round((endMs - startMs) / 1000);
+        // Проверяем разумность значения (не больше 2 часов = 7200 секунд)
+        if (diffSeconds >= 0 && diffSeconds <= 7200) {
+          return diffSeconds;
+        }
+      }
+    } catch (e) {
+      // Игнорируем ошибки парсинга дат
+    }
+    
+    return '-';
   },
   formatDuration: (sec) => {
     if (!sec || isNaN(sec)) return '-';
@@ -315,13 +350,15 @@ const helpers = {
     }
     // Fallback: пробуем через Date, но используем getHours/getMinutes без таймзоны
     try {
-    const date = new Date(timeStr);
+      const date = new Date(timeStr);
       if (!isNaN(date.getTime())) {
         const hours = String(date.getHours()).padStart(2, '0');
         const minutes = String(date.getMinutes()).padStart(2, '0');
         return `${hours}:${minutes}`;
       }
-    } catch (e) {}
+    } catch (e) {
+      logger.warn('[helpers.formatTime] Ошибка парсинга:', timeStr, e.message);
+    }
     return '-';
   },
   formatShortDate: (dateStr) => {
@@ -335,13 +372,15 @@ const helpers = {
     }
     // Fallback
     try {
-    const date = new Date(dateStr);
+      const date = new Date(dateStr);
       if (!isNaN(date.getTime())) {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
         return `${day}.${month}`;
       }
-    } catch (e) {}
+    } catch (e) {
+      logger.warn('[helpers.formatShortDate] Ошибка парсинга:', dateStr, e.message);
+    }
     return '';
   },
   formatDateTime: (dateStr) => {
@@ -364,7 +403,7 @@ const helpers = {
     }
     // Fallback
     try {
-    const date = new Date(dateStr);
+      const date = new Date(dateStr);
       if (!isNaN(date.getTime())) {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -373,7 +412,9 @@ const helpers = {
         const minutes = String(date.getMinutes()).padStart(2, '0');
         return `${day}.${month}.${year}, ${hours}:${minutes}`;
       }
-    } catch (e) {}
+    } catch (e) {
+      logger.warn('[helpers.formatDateTime] Ошибка парсинга:', dateStr, e.message);
+    }
     return '-';
   },
   getRecordingLink: (recordingFile) => {
@@ -505,58 +546,7 @@ function getAvailableQueues() {
   return availableQueues;
 }
 
-// Функция получения часового пояса из настроек (без хардкода)
-function getTimezone() {
-  try {
-    const settings = settingsDb.getAllSettings();
-    return settings.TZ || 'Europe/Moscow';
-  } catch (err) {
-    // Если база не инициализирована, используем из env или дефолт
-    return process.env.TZ || 'Europe/Moscow';
-  }
-}
-
-// Функция получения смещения часового пояса в часах от UTC
-function getTimezoneOffset(timezone) {
-  // Маппинг основных часовых поясов на смещение от UTC
-  const timezoneOffsets = {
-    'Europe/Moscow': 3,
-    'Europe/Kiev': 2,
-    'Europe/Kyiv': 2,
-    'Europe/Minsk': 3,
-    'Asia/Yekaterinburg': 5,
-    'Asia/Krasnoyarsk': 7,
-    'Asia/Irkutsk': 8,
-    'Asia/Yakutsk': 9,
-    'Asia/Vladivostok': 10,
-    'Europe/London': 0,
-    'Europe/Paris': 1,
-    'Europe/Berlin': 1,
-    'America/New_York': -5,
-    'America/Los_Angeles': -8,
-    'Asia/Tashkent': 5,
-    'Asia/Almaty': 6
-  };
-  
-  // Проверяем точное совпадение
-  if (timezoneOffsets.hasOwnProperty(timezone)) {
-    return timezoneOffsets[timezone];
-  }
-  
-  // Проверяем по ключевым словам
-  if (timezone.includes('Moscow') || timezone.includes('Minsk')) {
-    return 3;
-  }
-  if (timezone.includes('Kiev') || timezone.includes('Kyiv') || timezone.includes('EET')) {
-    return 2;
-  }
-  if (timezone.includes('London') || timezone.includes('UTC')) {
-    return 0;
-  }
-  
-  // По умолчанию 0 (UTC), если не определили
-  return 0;
-}
+// Функции getTimezone() и getTimezoneOffset() импортированы из timezone-helper.js
 
 // API для проверки статуса системы (добавлен перед основными маршрутами)
 app.get('/api/status', async (req, res) => {
@@ -1183,15 +1173,6 @@ app.post('/export-report-excel', async (req, res) => {
 });
 
 // Тестовый маршрут для отладки
-app.get('/test', (req, res) => {
-  res.json({
-    params: req.params,
-    query: req.query,
-    originalUrl: req.originalUrl,
-    path: req.path
-  });
-});
-
 // Service Worker
 app.get('/js/sw.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
@@ -1273,10 +1254,14 @@ app.get('/recordings/:year/:month/:day', (req, res) => {
     });
   }
 
-  const filePath = path.join(
-    process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor',
-    year, month, day, filename
-  );
+  const recordingsBase = path.resolve(process.env.RECORDINGS_PATH || '/var/spool/asterisk/monitor');
+  const filePath = path.join(recordingsBase, year, month, day, filename);
+
+  // Защита от path traversal
+  if (!filePath.startsWith(recordingsBase)) {
+    logger.warn(`[Recordings] Path traversal попытка: ${filePath}`);
+    return res.status(400).send('Invalid file path');
+  }
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).render('error', {
@@ -1325,615 +1310,8 @@ app.get('/recordings/:year/:month/:day', (req, res) => {
   }
 });
 
-// Функция получения звонков
-async function getQueueCalls(conn, queueName, startTime, endTime) {
-  // Если conn null или не имеет метода execute, используем dbExecute
-  if (!conn || typeof conn.execute !== 'function') {
-    const { execute: dbExecute } = require('./db-optimizer');
-    const [rows] = await dbExecute(`
-      SELECT 
-        q.time, q.event, q.callid, q.queuename, q.agent, 
-        q.data1, q.data2, q.data3, q.data4, q.data5,
-        c.recordingfile, c.linkedid
-      FROM asteriskcdrdb.queuelog q
-      LEFT JOIN asteriskcdrdb.cdr c ON q.callid = c.linkedid
-      WHERE q.queuename = ? 
-        AND q.time >= ? 
-        AND q.time <= ?
-      ORDER BY q.time ASC
-    `, [queueName, startTime, endTime]);
-    return rows;
-  }
-  
-  const [rows] = await conn.execute(`
-    SELECT 
-      q.time, q.event, q.callid, q.queuename, q.agent, 
-      q.data1, q.data2, q.data3, q.data4, q.data5,
-      c.recordingfile, c.linkedid
-    FROM asteriskcdrdb.queuelog q
-    LEFT JOIN asteriskcdrdb.cdr c ON q.callid = c.linkedid AND c.disposition = 'ANSWERED'
-    WHERE q.queuename = ? 
-      AND q.time BETWEEN ? AND ?
-    ORDER BY q.time
-  `, [queueName, startTime, endTime]);
-
-  const calls = {};
-  rows.forEach(row => {
-    if (!calls[row.callid]) {
-      calls[row.callid] = {
-        callId: row.callid,
-        events: [],
-        status: 'abandoned', // По умолчанию считаем пропущенным
-        startTime: null,
-        connectTime: null,
-        endTime: null,
-        clientNumber: null,
-        queuePosition: null,
-        agent: null,
-        duration: null,
-        waitTime: null,
-        recordingFile: row.recordingfile,
-        linkedid: row.linkedid
-      };
-    }
-    
-    calls[row.callid].events.push(row);
-    
-    // Обновляем recordingFile, если оно есть в текущей строке
-    if (row.recordingfile) {
-      calls[row.callid].recordingFile = row.recordingfile;
-    }
-    
-    // Функция для преобразования времени в строку
-    const timeToString = (time) => {
-      if (!time) return null;
-      if (typeof time === 'string') return time;
-      if (time instanceof Date) {
-        const year = time.getFullYear();
-        const month = String(time.getMonth() + 1).padStart(2, '0');
-        const day = String(time.getDate()).padStart(2, '0');
-        const hours = String(time.getHours()).padStart(2, '0');
-        const minutes = String(time.getMinutes()).padStart(2, '0');
-        const seconds = String(time.getSeconds()).padStart(2, '0');
-        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-      }
-      return String(time);
-    };
-    
-    switch (row.event) {
-      case 'ENTERQUEUE':
-        calls[row.callid].clientNumber = row.data2;
-        calls[row.callid].queuePosition = row.data3;
-        calls[row.callid].startTime = timeToString(row.time);
-        break;
-      case 'CONNECT':
-        calls[row.callid].connectTime = timeToString(row.time);
-        calls[row.callid].agent = row.data1;
-        break;
-      case 'COMPLETECALLER':
-      case 'COMPLETEAGENT':
-        calls[row.callid].endTime = timeToString(row.time);
-        calls[row.callid].status = row.event === 'COMPLETECALLER' 
-          ? 'completed_by_caller' 
-          : 'completed_by_agent';
-        calls[row.callid].duration = row.data2;
-        break;
-      case 'ABANDON':
-        calls[row.callid].endTime = timeToString(row.time);
-        calls[row.callid].waitTime = row.data3;
-        calls[row.callid].status = 'abandoned';
-        break;
-    }
-  });
-
-  return Object.values(calls);
-}
-
-// Функция получения входящих звонков из CDR
-async function getInboundCalls(conn, startTime, endTime) {
-  // Входящие звонки: звонок от длинного номера (src > 4) на короткий номер (dst <= 4)
-  // Логика: длинный номер (источник, внешний) -> короткий номер (назначение, внутренний)
-  // ОПТИМИЗАЦИЯ: убрали LENGTH(TRIM(...)) из WHERE для использования индексов
-  const minLength = CALL_FILTER_CONFIG.outboundMinLength;
-  const [rows] = await conn.execute(`
-    SELECT 
-      c.calldate, c.uniqueid, c.linkedid, c.src, c.dst, 
-      c.disposition, c.billsec, c.duration, c.recordingfile,
-      c.dcontext, c.channel, c.lastapp, c.lastdata
-    FROM asteriskcdrdb.cdr c
-    WHERE c.calldate >= ? 
-      AND c.calldate <= ?
-      AND c.src IS NOT NULL 
-      AND c.src != ''
-      AND c.dst IS NOT NULL 
-      AND c.dst != ''
-      AND CHAR_LENGTH(c.src) > ?
-      AND CHAR_LENGTH(c.dst) <= ?
-    ORDER BY c.calldate DESC
-  `, [startTime, endTime, minLength, minLength]);
-
-  // Функция для преобразования времени в строку
-  const timeToString = (time) => {
-    if (!time) return null;
-    if (typeof time === 'string') return time;
-    if (time instanceof Date) {
-      const year = time.getFullYear();
-      const month = String(time.getMonth() + 1).padStart(2, '0');
-      const day = String(time.getDate()).padStart(2, '0');
-      const hours = String(time.getHours()).padStart(2, '0');
-      const minutes = String(time.getMinutes()).padStart(2, '0');
-      const seconds = String(time.getSeconds()).padStart(2, '0');
-      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-    }
-    return String(time);
-  };
-
-  return rows.map(row => {
-    // Нормализуем disposition (убираем пробелы и приводим к верхнему регистру)
-    const disposition = (row.disposition || '').trim().toUpperCase().replace(/\s+/g, '');
-    
-    let status;
-    if (disposition === 'ANSWERED') {
-      status = 'answered';
-    } else if (disposition === 'NOANSWER') {
-      status = 'no_answer';
-    } else if (disposition === 'BUSY') {
-      status = 'busy';
-    } else if (disposition === 'FAILED') {
-      status = 'failed';
-    } else {
-      status = 'unknown';
-    }
-    
-    return {
-      callId: row.uniqueid,
-      linkedid: row.linkedid,
-      clientNumber: row.src,
-      destination: row.dst,
-      startTime: timeToString(row.calldate),
-      endTime: timeToString(row.calldate),
-      status: status,
-      duration: row.billsec || 0,
-      waitTime: null,
-      recordingFile: row.recordingfile,
-      dcontext: row.dcontext,
-      channel: row.channel,
-      isOutbound: false // Все звонки из getInboundCalls - входящие
-    };
-  });
-}
-
-// Функция получения исходящих звонков из CDR
-async function getOutboundCalls(conn, startTime, endTime) {
-  // Исходящие звонки определяются по полю outbound_cnum (как в PHP версии)
-  // Условия: LENGTH(outbound_cnum) >= 4 AND lastapp != 'Hangup'
-  // ДОПОЛНИТЕЛЬНО: исключаем внутренние звонки (dst <= 4) - исходящие должны быть на длинные номера
-  // ОПТИМИЗАЦИЯ: убрали LENGTH(TRIM(...)) из WHERE для использования индексов
-  const minLength = CALL_FILTER_CONFIG.outboundMinLength;
-  // Определяем функцию для выполнения запроса
-  // Если conn - это connection объект с методом execute, используем его
-  // Иначе используем dbExecute из db-optimizer
-  const executeFn = (conn && typeof conn.execute === 'function') 
-    ? conn.execute.bind(conn) 
-    : dbExecute;
-  const [rows] = await executeFn(`
-    SELECT 
-      c.calldate, c.uniqueid, c.linkedid, c.src, c.dst, 
-      c.disposition, c.billsec, c.duration, c.recordingfile,
-      c.dcontext, c.channel, c.lastapp, c.lastdata,
-      c.outbound_cnum, c.cnum
-    FROM asteriskcdrdb.cdr c
-    WHERE c.calldate >= ? 
-      AND c.calldate <= ?
-      AND c.outbound_cnum IS NOT NULL 
-      AND c.outbound_cnum != ''
-      AND CHAR_LENGTH(c.outbound_cnum) >= ?
-      AND (c.lastapp IS NULL OR c.lastapp != 'Hangup')
-      AND c.dst IS NOT NULL
-      AND c.dst != ''
-      AND CHAR_LENGTH(c.dst) > ?
-    ORDER BY c.calldate DESC
-  `, [startTime, endTime, minLength, minLength]);
-
-  return rows.map(row => {
-    // Нормализуем disposition (убираем пробелы и приводим к верхнему регистру)
-    const disposition = (row.disposition || '').trim().toUpperCase().replace(/\s+/g, '');
-    
-    let status;
-    if (disposition === 'ANSWERED') {
-      status = 'answered';
-    } else if (disposition === 'NOANSWER') {
-      status = 'no_answer';
-    } else if (disposition === 'BUSY') {
-      status = 'busy';
-    } else if (disposition === 'FAILED') {
-      status = 'failed';
-    } else {
-      status = 'unknown';
-    }
-    
-    // Функция для преобразования времени в строку
-    const timeToString = (time) => {
-      if (!time) return null;
-      if (typeof time === 'string') return time;
-      if (time instanceof Date) {
-        const year = time.getFullYear();
-        const month = String(time.getMonth() + 1).padStart(2, '0');
-        const day = String(time.getDate()).padStart(2, '0');
-        const hours = String(time.getHours()).padStart(2, '0');
-        const minutes = String(time.getMinutes()).padStart(2, '0');
-        const seconds = String(time.getSeconds()).padStart(2, '0');
-        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-      }
-      return String(time);
-    };
-    
-    // Для исходящих звонков: isOutbound = true
-    // Это поможет правильно отобразить номер абонента (destination вместо clientNumber)
-    return {
-      callId: row.uniqueid,
-      linkedid: row.linkedid,
-      clientNumber: row.src,
-      destination: row.dst,
-      startTime: timeToString(row.calldate),
-      endTime: timeToString(row.calldate),
-      status: status,
-      duration: row.billsec || 0,
-      waitTime: null,
-      recordingFile: row.recordingfile,
-      dcontext: row.dcontext,
-      channel: row.channel,
-      isOutbound: true, // Все звонки из getOutboundCalls - исходящие
-      outbound_cnum: row.outbound_cnum,
-      cnum: row.cnum
-    };
-  });
-}
-
-/**
- * Получить список внутренних номеров (агентов) из очереди
- * Агенты берутся из таблицы asterisk.queues_details, где id = номер очереди
- * keyword = 'member', data имеет формат "Local/1006@from-queue/n,0"
- * Нужно извлечь номер (1006) из строки
- */
-async function getQueueAgents(conn, queueName, startTime, endTime) {
-  const executeFn = (conn && typeof conn.execute === 'function') 
-    ? conn.execute.bind(conn) 
-    : dbExecute;
-  
-  const [rows] = await executeFn(`
-    SELECT DISTINCT data as member
-    FROM asterisk.queues_details
-    WHERE id = ? AND keyword = 'member'
-  `, [queueName]);
-
-  // Извлекаем номер из формата "Local/1006@from-queue/n,0"
-  const agents = rows.map(row => {
-    const member = String(row.member || '').trim();
-    // Ищем паттерн: Local/НОМЕР@
-    const match = member.match(/Local\/(\d+)@/);
-    if (match && match[1]) {
-      return match[1];
-      }
-    return null;
-  }).filter(agent => agent && agent.length >= 3 && agent.length <= 5);
-  
-  return [...new Set(agents)]; // Убираем дубликаты
-}
-
-/**
- * Получить исходящие звонки от внутренних номеров из очереди
- * (Fallback функция, когда USE_ULTRA_FAST_QUERIES = false)
- */
-async function getOutboundQueueCalls(conn, queueName, startTime, endTime) {
-  // Сначала получаем список внутренних номеров (агентов) из очереди
-  const agents = await getQueueAgents(conn, queueName, startTime, endTime);
-          
-  if (!agents || agents.length === 0) {
-    logger.info(`[getOutboundQueueCalls] Не найдено агентов в очереди ${queueName} за период ${startTime} - ${endTime}`);
-    return [];
-  }
-
-  logger.info(`[getOutboundQueueCalls] Найдено ${agents.length} агентов в очереди ${queueName}: ${agents.slice(0, 5).join(', ')}${agents.length > 5 ? '...' : ''}`);
-
-  // Теперь получаем исходящие звонки от этих внутренних номеров
-  const executeFn = (conn && typeof conn.execute === 'function') 
-    ? conn.execute.bind(conn) 
-    : dbExecute;
-  
-    const minLength = CALL_FILTER_CONFIG.outboundMinLength;
-  
-  // Создаем плейсхолдеры для IN clause
-  const placeholders = agents.map(() => '?').join(',');
-  
-  const [rows] = await executeFn(`
-        SELECT 
-      c.calldate, c.uniqueid, c.linkedid, c.src, c.dst, 
-      c.disposition, c.billsec, c.duration, c.recordingfile,
-      c.dcontext, c.channel, c.lastapp, c.lastdata,
-      c.outbound_cnum, c.cnum
-        FROM asteriskcdrdb.cdr c
-    WHERE c.calldate >= ? 
-      AND c.calldate <= ?
-      AND c.src IN (${placeholders})
-          AND c.outbound_cnum IS NOT NULL 
-          AND c.outbound_cnum != ''
-      AND CHAR_LENGTH(c.outbound_cnum) >= ?
-          AND (c.lastapp IS NULL OR c.lastapp != 'Hangup')
-          AND c.dst IS NOT NULL
-          AND c.dst != ''
-      AND CHAR_LENGTH(c.dst) > ?
-    ORDER BY c.calldate DESC
-  `, [startTime, endTime, ...agents, minLength, minLength]);
-  
-  return rows.map(row => {
-    // Нормализуем disposition (убираем пробелы и приводим к верхнему регистру)
-    const disposition = (row.disposition || '').trim().toUpperCase().replace(/\s+/g, '');
-    
-    let status;
-    if (disposition === 'ANSWERED') {
-      status = 'answered';
-    } else if (disposition === 'NOANSWER') {
-      status = 'no_answer';
-    } else if (disposition === 'BUSY') {
-      status = 'busy';
-    } else if (disposition === 'FAILED') {
-      status = 'failed';
-    } else {
-      status = 'unknown';
-    }
-    
-    // Функция для преобразования времени в строку
-    const timeToString = (time) => {
-      if (!time) return null;
-      if (typeof time === 'string') return time;
-      if (time instanceof Date) {
-        const year = time.getFullYear();
-        const month = String(time.getMonth() + 1).padStart(2, '0');
-        const day = String(time.getDate()).padStart(2, '0');
-        const hours = String(time.getHours()).padStart(2, '0');
-        const minutes = String(time.getMinutes()).padStart(2, '0');
-        const seconds = String(time.getSeconds()).padStart(2, '0');
-        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-      }
-      return String(time);
-    };
-    
-    return {
-      callId: row.uniqueid,
-      linkedid: row.linkedid,
-      clientNumber: row.outbound_cnum || row.src, // Для исходящих: clientNumber = outbound_cnum или src
-      destination: row.dst,
-      startTime: timeToString(row.calldate),
-      endTime: timeToString(row.calldate),
-      status: status,
-      duration: row.billsec || 0,
-      waitTime: null,
-      recordingFile: row.recordingfile,
-      dcontext: row.dcontext,
-      channel: row.channel,
-      isOutbound: true, // Все звонки из getOutboundQueueCalls - исходящие
-      outbound_cnum: row.outbound_cnum,
-      cnum: row.cnum
-          };
-      });
-    }
-
-// Функция checkCallbacksBatch перенесена в callback-checker.js
-// Используется импорт из модуля выше
-// Старая функция удалена - теперь используется общий модуль
-
-// Функция checkCallbacksBatchInbound также перенесена в callback-checker.js
-// Старая функция удалена - теперь используется общий модуль
-
-// Функция проверки перезвонов (старая версия, оставлена для совместимости)
-async function checkCallbacks(conn, call, queueName) {
-  // Проверяем только пропущенные звонки
-  // Звонок считается пропущенным если:
-  // 1. status === 'abandoned'
-  // 2. duration <= 5 секунд
-  // 3. Нет connectTime (не был принят)
-  const isAbandoned = call.status === 'abandoned' || 
-                      (call.duration && parseInt(call.duration) <= 5) ||
-                      (!call.connectTime && call.endTime && call.status !== 'completed_by_agent' && call.status !== 'completed_by_caller');
-  
-  // Если звонок не пропущенный, не проверяем перезвоны
-  if (!isAbandoned) {
-    return null;
-  }
-  
-  // Проверяем наличие обязательных данных для поиска перезвонов
-  if (!call.clientNumber || !call.startTime) {
-    // Даже если нет данных для поиска, помечаем как "Не обработан"
-    return {
-      type: 'no_callback',
-      status: 'Не обработан',
-      callbackTime: null,
-      recordingFile: null
-    };
-  }
-
-  // Временной интервал поиска (2 часа после пропущенного звонка)
-  const callbackHours = 2;
-  const callbackStartTime = new Date(new Date(call.startTime).getTime() + 1000); // +1 секунда
-  const callbackEndTime = new Date(new Date(call.startTime).getTime() + callbackHours * 3600 * 1000);
-  
-  const callbackStartStr = format(callbackStartTime, 'yyyy-MM-dd HH:mm:ss');
-  const callbackEndStr = format(callbackEndTime, 'yyyy-MM-dd HH:mm:ss');
-  
-  // Берем номер для поиска - нормализуем номер
-  const clientNumberStr = call.clientNumber.toString().trim();
-  const clientNumberLast10 = clientNumberStr.slice(-10);
-  const clientNumberLast9 = clientNumberStr.slice(-9);
-  
-  if (process.env.DEBUG === 'true') {
-    logger.info(`[checkCallbacks] Проверка перезвонов для звонка ${call.callId}:`);
-    logger.info(`  Номер: ${clientNumberStr} (последние 10: ${clientNumberLast10}, последние 9: ${clientNumberLast9})`);
-    logger.info(`  Период поиска: ${callbackStartStr} - ${callbackEndStr}`);
-  }
-
-  try {
-    // Проверка 1: Перезвонил сам (входящий звонок от клиента)
-    // СНАЧАЛА проверяем в той же очереди (queuelog + cdr)
-    // Если не найдено, тогда ищем во всей базе CDR
-    let clientCallbackRows = [];
-    
-    // 1.1. Ищем в той же очереди
-    // ВАЖНО: Номер клиента находится в ENTERQUEUE (data2), а не в COMPLETECALLER/COMPLETEAGENT
-    // Поэтому делаем JOIN с ENTERQUEUE событием для получения номера клиента
-    // ВАЖНО: Исключаем оригинальный звонок (q.callid != call.callId)
-    const [queueCallbackRows] = await conn.execute(`
-      SELECT 
-        q.time, q.event, q.callid, q.queuename,
-        c.calldate, c.uniqueid, c.billsec, c.disposition,
-        c.recordingfile, c.src, c.dst,
-        e.data2 as clientNumber
-      FROM asteriskcdrdb.queuelog q
-      INNER JOIN asteriskcdrdb.queuelog e ON q.callid = e.callid AND e.event = 'ENTERQUEUE'
-      INNER JOIN asteriskcdrdb.cdr c ON q.callid = c.linkedid
-      WHERE q.queuename = ?
-        AND q.time >= ? 
-        AND q.time <= ?
-        AND q.event IN ('COMPLETECALLER', 'COMPLETEAGENT')
-        AND c.disposition = 'ANSWERED'
-        AND c.billsec >= 5
-        AND q.callid != ?
-        AND (
-          e.data2 LIKE ? OR e.data2 LIKE ? OR 
-          RIGHT(e.data2, 10) = ? OR RIGHT(e.data2, 9) = ? OR
-          e.data2 = ?
-        )
-      ORDER BY q.time ASC
-      LIMIT 1
-    `, [queueName, callbackStartStr, callbackEndStr, call.callId, `%${clientNumberLast10}`, `%${clientNumberLast9}`, clientNumberLast10, clientNumberLast9, clientNumberStr]);
-    
-    if (queueCallbackRows && queueCallbackRows.length > 0) {
-      clientCallbackRows = queueCallbackRows;
-      if (process.env.DEBUG === 'true') {
-        logger.info(`[checkCallbacks] ✅ Найден перезвон в очереди для ${call.callId}`);
-      }
-    } else {
-      // 1.2. Если не найдено в очереди, ищем во всей базе CDR
-      // ВАЖНО: ищем только ВХОДЯЩИЕ звонки (исключаем исходящие)
-      const [cdrCallbackRows] = await conn.execute(`
-        SELECT 
-          c.calldate, c.uniqueid, c.billsec, c.disposition,
-          c.recordingfile, c.src, c.dst, c.dcontext
-        FROM asteriskcdrdb.cdr c
-        WHERE c.calldate >= ? 
-          AND c.calldate <= ?
-          AND c.disposition = 'ANSWERED'
-          AND c.billsec >= 5
-          AND (
-            c.src LIKE ? OR c.src LIKE ? OR 
-            RIGHT(c.src, 10) = ? OR RIGHT(c.src, 9) = ? OR
-            c.src = ?
-          )
-          AND c.dcontext NOT LIKE 'outbound%'
-          AND c.dcontext NOT LIKE 'from-internal%'
-          AND c.dcontext NOT LIKE 'ext-local%'
-        ORDER BY c.calldate ASC
-        LIMIT 1
-      `, [callbackStartStr, callbackEndStr, `%${clientNumberLast10}`, `%${clientNumberLast9}`, clientNumberLast10, clientNumberLast9, clientNumberStr]);
-      
-      if (cdrCallbackRows && cdrCallbackRows.length > 0) {
-        clientCallbackRows = cdrCallbackRows;
-        if (process.env.DEBUG === 'true') {
-          logger.info(`[checkCallbacks] ✅ Найден перезвон в CDR (не в очереди) для ${call.callId}`);
-        }
-      }
-    }
-
-    if (clientCallbackRows && clientCallbackRows.length > 0) {
-      const callback = clientCallbackRows[0];
-      if (process.env.DEBUG === 'true') {
-        logger.info(`[checkCallbacks] ✅ Найден перезвон от клиента для ${call.callId}:`);
-        logger.info(`  callback.uniqueid: ${callback.uniqueid}`);
-        logger.info(`  callback.src: ${callback.src}`);
-        logger.info(`  callback.calldate: ${callback.calldate}`);
-        logger.info(`  callback.billsec: ${callback.billsec}`);
-        logger.info(`  callback.disposition: ${callback.disposition}`);
-      }
-      
-      if (callback.disposition === 'ANSWERED' && callback.billsec >= 5) {
-        return {
-          type: 'client_callback',
-          status: 'Перезвонил сам',
-          callbackTime: callback.calldate,
-          recordingFile: callback.recordingfile || call.recordingFile
-        };
-      }
-    } else {
-      if (process.env.DEBUG === 'true') {
-        logger.info(`[checkCallbacks] ❌ Перезвон от клиента не найден для ${call.callId}`);
-      }
-    }
-
-    // Проверка 2: Перезвонили мы (исходящий звонок к клиенту)
-    // Ищем ВСЕ успешно отвеченные исходящие звонки к этому номеру в течение 2 часов
-    const [agentCallbackRows] = await conn.execute(`
-      SELECT 
-        c.calldate, c.uniqueid, c.billsec, c.disposition,
-        c.recordingfile, c.src, c.dst, c.dcontext
-      FROM asteriskcdrdb.cdr c
-      WHERE c.calldate >= ? 
-        AND c.calldate <= ?
-        AND c.disposition = 'ANSWERED'
-        AND c.billsec >= 5
-        AND (
-          c.dst LIKE ? OR c.dst LIKE ? OR 
-          RIGHT(c.dst, 10) = ? OR RIGHT(c.dst, 9) = ? OR
-          c.dst = ?
-        )
-      ORDER BY c.calldate ASC
-      LIMIT 1
-    `, [callbackStartStr, callbackEndStr, `%${clientNumberLast10}`, `%${clientNumberLast9}`, clientNumberLast10, clientNumberLast9, clientNumberStr]);
-
-    if (agentCallbackRows && agentCallbackRows.length > 0) {
-      const callback = agentCallbackRows[0];
-      if (process.env.DEBUG === 'true') {
-        logger.info(`[checkCallbacks] ✅ Найден перезвон от агента для ${call.callId}:`);
-        logger.info(`  callback.uniqueid: ${callback.uniqueid}`);
-        logger.info(`  callback.dst: ${callback.dst}`);
-        logger.info(`  callback.calldate: ${callback.calldate}`);
-        logger.info(`  callback.billsec: ${callback.billsec}`);
-      }
-      
-      if (callback.disposition === 'ANSWERED' && callback.billsec >= 5) {
-        return {
-          type: 'agent_callback',
-          status: 'Перезвонили мы',
-          callbackTime: callback.calldate,
-          recordingFile: callback.recordingfile || call.recordingFile
-        };
-      }
-    } else {
-      if (process.env.DEBUG === 'true') {
-        logger.info(`[checkCallbacks] ❌ Перезвон от агента не найден для ${call.callId}`);
-      }
-    }
-    
-    // Не обработан - не нашли ни перезвон от клиента, ни от агента
-    if (process.env.DEBUG === 'true') {
-      logger.info(`[checkCallbacks] ⏸️ Не обработан для ${call.callId} - перезвонов не найдено`);
-    }
-    return {
-      type: 'no_callback',
-      status: 'Не обработан',
-      callbackTime: null,
-      recordingFile: null
-    };
-  } catch (error) {
-    logger.error('Ошибка при проверке перезвонов для звонка', call.callId, ':', error);
-    // При ошибке возвращаем "Не обработан" вместо null, чтобы статус был установлен
-    return {
-      type: 'no_callback',
-      status: 'Не обработан',
-      callbackTime: null,
-      recordingFile: null
-    };
-  }
-}
+// Функции getQueueCalls, getInboundCalls, getOutboundCalls, getQueueAgents, getOutboundQueueCalls
+// перенесены в db-calls.js для уменьшения размера app.js
 
 // Функции расчета статистики (оптимизированная версия - один проход по массиву)
 function calculateStats(calls, viewType = 'queue') {
@@ -2353,3 +1731,43 @@ initializeDatabaseAdapter()
       logger.info(`⚠️ Сервер запущен с ошибками инициализации на http://localhost:${PORT}`);
     });
 });
+
+// === Graceful Shutdown ===
+function gracefulShutdown(signal) {
+  logger.info(`\n⏹️  Получен сигнал ${signal}, начинаем graceful shutdown...`);
+  
+  server.close(() => {
+    logger.info('✅ HTTP сервер остановлен');
+    
+    // Закрываем WebSocket
+    if (io) {
+      io.close(() => {
+        logger.info('✅ WebSocket сервер остановлен');
+      });
+    }
+    
+    // Закрываем пул соединений с БД
+    if (pool && typeof pool.end === 'function') {
+      pool.end()
+        .then(() => {
+          logger.info('✅ Пул соединений с БД закрыт');
+          process.exit(0);
+        })
+        .catch((err) => {
+          logger.error('❌ Ошибка при закрытии пула БД:', err);
+          process.exit(1);
+        });
+    } else {
+      process.exit(0);
+    }
+  });
+  
+  // Принудительный выход через 10 секунд
+  setTimeout(() => {
+    logger.error('⚠️ Принудительное завершение после таймаута');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
