@@ -1,6 +1,6 @@
 {
   "name": "asterisk-stats",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Asterisk Queue Analytics with callback tracking",
   "main": "app.js",
   "repository": {

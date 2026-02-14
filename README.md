@@ -4,7 +4,7 @@
 
 **Профессиональное веб-приложение для анализа статистики очередей Asterisk**
 
-[![Version](https://img.shields.io/badge/version-1.1.0-4f46e5?style=for-the-badge)](https://github.com/maerty1/asterisk-stats)
+[![Version](https://img.shields.io/badge/version-1.2.0-4f46e5?style=for-the-badge)](https://github.com/maerty1/asterisk-stats)
 [![License](https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge)](LICENSE)
 [![Node](https://img.shields.io/badge/node-16%2B-339933?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![MySQL](https://img.shields.io/badge/mysql-8.0+-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://www.mysql.com/)
@@ -40,6 +40,10 @@
 - 📊 **Prometheus метрики** — мониторинг производительности
 - 🐳 **Docker Ready** — контейнеризация из коробки
 - 🔄 **CI/CD** — GitHub Actions для автоматизации
+- 🌐 **i18n** — многоязычность (русский, английский)
+- 🔌 **WebSocket** — real-time обновления через Socket.IO
+- 🔒 **Безопасность** — защита от Path Traversal, Command Injection, Rate Limiting
+- ⏹️ **Graceful Shutdown** — корректное завершение всех ресурсов
 
 ---
 
@@ -47,7 +51,7 @@
 
 ### Предварительные требования
 
-- Node.js 14.0 или выше
+- Node.js 16.0 или выше
 - MySQL/MariaDB с базой данных Asterisk
 - Доступ к таблицам `asteriskcdrdb.cdr` и `asteriskcdrdb.queuelog`
 
@@ -356,7 +360,7 @@ curl http://localhost:3000/api/health/ready
 
 ```
 asterisk-stats/
-├── 📄 app.js                    # Главный сервер (Express)
+├── 📄 app.js                    # Главный сервер (Express, middleware, graceful shutdown)
 ├── 📄 swagger.js                # Swagger/OpenAPI конфигурация
 ├── 📄 metrics.js                # Prometheus метрики
 ├── 📄 logger.js                 # Winston логгер
@@ -368,16 +372,36 @@ asterisk-stats/
 │   ├── comparison.js           # Сравнение периодов
 │   ├── views.js                # Страницы приложения (EJS)
 │   └── index.js                # Экспорт всех роутеров
+├── 📄 db-optimizer.js           # Connection pooling, prepared statements
+├── 📄 db-optimized-queue.js     # Ультра-быстрые запросы (2 запроса + Map)
+├── 📄 db-parallel.js            # Параллельные запросы к БД
+├── 📄 db-large-data.js          # Оптимизация для больших данных
+├── 📄 db-calls.js               # Получение звонков из БД (5 функций)
+├── 📄 timezone-helper.js        # Централизованная обработка таймзон (DST)
+├── 📄 helpers.js                # Вспомогательные функции
+├── 📄 callback-checker.js       # Проверка перезвонов
+├── 📄 email-service.js          # Email-отчеты (Nodemailer)
+├── 📄 websocket.js              # WebSocket (Socket.IO) real-time
+├── 📄 settings-db.js            # SQLite для настроек
+├── 📄 queue-rankings.js         # Рейтинг очередей
+├── 📄 stats-calculator.js       # Калькулятор статистики
+├── 📄 period-comparison.js      # Сравнение периодов
 ├── 📁 views/                    # EJS шаблоны
 │   ├── index.ejs               # Главная страница
 │   ├── rankings.ejs            # Страница рейтингов
-│   └── partials/               # Компоненты
+│   └── partials/               # Компоненты (header, footer, head)
 ├── 📁 public/                   # Статические файлы
-│   ├── css/style.css           # Темная тема
+│   ├── css/style.css           # Темная тема (Material Design 3)
 │   └── js/                     # Клиентский JavaScript
+├── 📁 i18n/                     # Интернационализация
+│   ├── ru.json                 # Русский
+│   └── en.json                 # English
+├── 📁 types/                    # TypeScript определения для JSDoc
 ├── 📁 sql/                      # SQL скрипты
-├── 📁 db-adapters/              # Адаптеры БД
+├── 📁 grafana/                  # Grafana дашборды
+├── 📁 tests/                    # Тесты (Jest)
 ├── 📁 .github/workflows/        # CI/CD
+├── 📁 .cursor/rules/            # Cursor AI Rules
 ├── 📄 Dockerfile                # Docker образ
 ├── 📄 docker-compose.yml        # Docker Compose
 └── 📄 .env.example              # Пример конфигурации
@@ -410,27 +434,32 @@ asterisk-stats/
 
 **Backend:**
 - Node.js 16+ / Express.js 4.x
-- MySQL2 с connection pooling
+- MySQL2 с connection pooling и prepared statements
 - Nodemailer для email-отчетов
 - Node-cron для планирования задач
-- Winston для логирования
+- Winston для структурированного логирования (JSON)
 - Swagger/OpenAPI для документации
+- Socket.IO для WebSocket real-time
+- express-rate-limit для защиты от злоупотреблений
 
 **Frontend:**
 - EJS шаблонизатор
 - Vanilla JavaScript (ES6+)
 - Chart.js для графиков
-- Современный CSS (темная тема)
+- Современный CSS (тёмная тема, Material Design 3)
+- i18n (русский, английский)
 
 **DevOps:**
 - Docker & Docker Compose
 - GitHub Actions CI/CD
-- Prometheus метрики
-- Health check endpoints
+- Prometheus метрики (`prom-client`)
+- Health check endpoints (liveness, readiness)
+- Grafana дашборд
+- Graceful shutdown (SIGTERM/SIGINT)
 
 **База данных:**
-- MySQL/MariaDB (основная)
-- SQLite (настройки)
+- MySQL/MariaDB (основная) — connection pooling, batch processing
+- SQLite через sql.js (настройки)
 - Таблицы: `cdr`, `queuelog`, `email_reports`
 
 ---
@@ -439,9 +468,11 @@ asterisk-stats/
 
 - ✅ Использование переменных окружения для секретов
 - ✅ Защита от SQL-инъекций (prepared statements)
-- ✅ Rate limiting для API endpoints
-- ✅ Helmet.js для защиты HTTP заголовков
+- ✅ Rate limiting для API endpoints (`express-rate-limit`)
 - ✅ Валидация всех входных данных
+- ✅ Защита от Path Traversal (проверка путей через regex + `path.resolve()`)
+- ✅ Защита от Command Injection (`fs.readdirSync` вместо `execSync`)
+- ✅ Graceful shutdown (корректное завершение HTTP, WebSocket, DB pool)
 
 ---
 
@@ -450,10 +481,12 @@ asterisk-stats/
 ### Производительность
 
 - ⚡ **Connection Pooling** — эффективное использование соединений с БД
-- ⚡ **Batch Processing** — групповая обработка запросов
+- ⚡ **Batch Processing** — групповая обработка запросов (BATCH_SIZE = 1000)
 - ⚡ **Gzip Compression** — сжатие ответов сервера
-- ⚡ **Query Optimization** — оптимизированные SQL-запросы
-- ⚡ **Caching** — кэширование списка очередей
+- ⚡ **Query Optimization** — ультра-оптимизированные SQL-запросы (стратегия "2 запроса + Map")
+- ⚡ **Caching** — кэширование списка очередей и настроек
+- ⚡ **Map Lookup** — O(N) callback matching вместо O(N×M)
+- ⚡ **Static Cache Busting** — версионирование CSS/JS файлов при старте сервера
 
 ### Метрики расчета
 
@@ -523,21 +556,27 @@ npm run format:check
 
 ```
 .cursor/rules/
-├── project-standards.mdc      # Always Apply - базовые стандарты проекта
-├── api-routes.mdc             # Apply to Specific Files - API маршруты
-├── data-processing.mdc        # Apply to Specific Files - обработка данных
-├── database-patterns.mdc     # Apply to Specific Files - работа с БД
-├── frontend-patterns.mdc      # Apply to Specific Files - фронтенд
-├── i18n-patterns.mdc          # Apply to Specific Files - интернационализация
-├── monitoring-devops.mdc      # Apply to Specific Files - мониторинг и DevOps
-└── realtime-websocket.mdc     # Apply to Specific Files - WebSocket и real-time
+├── project-standards.mdc      # Always Apply - базовые стандарты, архитектура, безопасность
+├── api-routes.mdc             # API маршруты, валидация, path traversal защита
+├── data-processing.mdc        # Обработка данных, таймзоны, db-calls.js
+├── database-patterns.mdc     # Работа с БД, Map lookup, callback matching
+├── frontend-patterns.mdc      # EJS, CSS, cache busting (staticVersion)
+├── i18n-patterns.mdc          # Интернационализация (ru/en)
+├── monitoring-devops.mdc      # Prometheus, Docker, CI/CD, production checklist
+└── realtime-websocket.mdc     # WebSocket, real-time, graceful shutdown
 ```
 
-**Типы правил:**
+**Покрытие правилами:**
 
-- **Always Apply** (`project-standards.mdc`) — применяется автоматически к каждой сессии
-- **Apply to Specific Files** — применяется при работе с соответствующими файлами
-- **Apply Manually** — можно упомянуть через `@rule-name` в чате
+| Правило | Файлы | Ключевые паттерны |
+|---------|-------|-------------------|
+| `project-standards` | Все файлы (Always Apply) | Именование, структура, безопасность, graceful shutdown, cache busting |
+| `api-routes` | `app.js`, `routes/*.js` | Валидация, path traversal, rate limiting, Swagger |
+| `data-processing` | `helpers.js`, `*-helper.js`, `db-calls.js` | Парсинг времени, таймзоны, callback matching |
+| `database-patterns` | `db-*.js`, `app.js` | Connection pooling, Map lookup, batch processing |
+| `frontend-patterns` | `views/*.ejs`, `public/js/*.js` | EJS, staticVersion, Chart.js, i18n |
+| `monitoring-devops` | `metrics.js`, `Dockerfile`, CI/CD | Prometheus, health checks, production checklist |
+| `realtime-websocket` | `websocket.js`, `period-comparison.js` | Socket.IO, graceful shutdown |
 
 **Использование:**
 
